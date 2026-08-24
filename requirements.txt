@@ -1,0 +1,7 @@
+Flask
+Flask-SQLAlchemy
+Flask-Compress
+Flask-Limiter
+openpyxl
+waitress
+gunicorn

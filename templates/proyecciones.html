@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proyecciones — GO3</title>
+  <title>Proyecciones — Total país</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -57,7 +57,7 @@
 </head>
 <body>
 <header>
-  <h1>📈 Proyecciones — Modelo de Regresión (GO3)</h1>
+  <h1>📈 Proyecciones — Modelo de Regresión (total país)</h1>
   <nav>
     <a href="/">Mapa</a>
     <a href="/proyecciones" class="active">Proyecciones</a>
@@ -235,13 +235,13 @@ async function load() {
       labels,
       datasets: [
         {
-          label: 'GO3 real (total país)',
+          label: 'Real — total país (GO2+GO3+N2+N3)',
           data: serie.map(p => p.yt),
           borderColor: '#38bdf8', backgroundColor: 'transparent',
           pointRadius: 0, borderWidth: 2, spanGaps: false,
         },
         {
-          label: 'GO3 predicho (modelo)',
+          label: 'Estimado por el modelo',
           data: serie.map(p => predecir(p, guardados)),
           borderColor: '#f97316', backgroundColor: 'transparent',
           borderDash: [5, 4], pointRadius: 0, borderWidth: 2,
@@ -266,6 +266,15 @@ async function load() {
 
   // Si los coeficientes guardados no reproducen la serie, conviene decirlo:
   // con un MAPE asi de alto el predicho no significa nada tal cual viene.
+  if (!data.hay_volumen) {
+    const nota = document.getElementById('nota');
+    nota.style.display = 'block';
+    nota.innerHTML = `No hay volúmenes cargados, así que no hay serie real contra la
+      cual comparar. Subí el VOLUMEN.csv desde <b>Admin</b>: la serie real es el total
+      país de los cuatro productos, calculado desde esos datos.`;
+    return;
+  }
+
   const m = metricas(guardados);
   if (m.mape != null && m.mape > 0.25) {
     const nota = document.getElementById('nota');

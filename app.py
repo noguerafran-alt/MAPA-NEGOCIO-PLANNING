@@ -271,19 +271,32 @@ def api_proyeccion():
     if not cfg:
         return jsonify({'error': 'No hay modelo de regresión cargado. Subilo desde Admin.'}), 404
 
+    # La serie real es el total pais de todos los productos, calculado desde los
+    # volumenes cargados: el modelo estima ese total. La columna Yt del Excel no
+    # se usa como real (resulto ser gasoil solo, GO2+GO3, no el total).
+    totales = {}
+    for anio, mes, total in db.session.query(
+            VolumeMonthly.anio, VolumeMonthly.mes,
+            func.sum(VolumeMonthly.volumen)).group_by(
+            VolumeMonthly.anio, VolumeMonthly.mes):
+        totales[(anio, mes)] = float(total or 0)
+
     points = RegressionPoint.query.order_by(RegressionPoint.anio, RegressionPoint.mes).all()
     b0 = cfg.b0 or 0.0
     serie = []
     for p in points:
         pred = b0 + cfg.b1 * p.x1 + cfg.b2 * p.x2 + cfg.b3 * p.x3 + cfg.b4 * p.x4
+        # Los meses sin volumen cargado (los futuros) van sin real: solo prediccion.
         serie.append({
-            'anio': p.anio, 'mes': p.mes, 'yt': p.yt, 'predicho': pred,
+            'anio': p.anio, 'mes': p.mes, 'yt': totales.get((p.anio, p.mes)),
+            'predicho': pred,
             'x1': p.x1, 'x2': p.x2, 'x3': p.x3, 'x4': p.x4,
         })
 
     return jsonify({
         'coeficientes': {'b0': b0, 'b1': cfg.b1, 'b2': cfg.b2, 'b3': cfg.b3, 'b4': cfg.b4},
         'mape': cfg.mape, 'r2': cfg.r2, 'serie': serie,
+        'hay_volumen': bool(totales),
     })
 
 

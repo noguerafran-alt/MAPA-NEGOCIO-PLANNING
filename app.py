@@ -131,14 +131,39 @@ def admin():
     return render_template('admin.html', user=current_user())
 
 
+def _lista(param):
+    """Lee un parametro de lista separada por comas.
+
+    Devuelve None si el parametro no vino (no se filtra por ese campo) y una
+    lista vacia si vino vacio (el usuario destildo todo -> no debe pasar nada).
+    Son casos distintos: sin esta diferencia, destildar todo mostraria todo.
+    """
+    raw = request.args.get(param)
+    if raw is None:
+        return None
+    return [s.strip() for s in raw.split(',') if s.strip()]
+
+
+def _enteros(valores):
+    out = []
+    for v in valores:
+        try:
+            out.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 @app.route('/api/filtros')
 @login_required(1)
 def api_filtros():
     anios = db.session.query(VolumeMonthly.anio).distinct().order_by(VolumeMonthly.anio).all()
+    meses = db.session.query(VolumeMonthly.mes).distinct().order_by(VolumeMonthly.mes).all()
     petroleras = db.session.query(VolumeMonthly.petrolera).distinct().order_by(VolumeMonthly.petrolera).all()
     sectores = db.session.query(VolumeMonthly.sector).distinct().order_by(VolumeMonthly.sector).all()
     return jsonify({
         'anios': [a[0] for a in anios],
+        'meses': [m[0] for m in meses],
         'petroleras': [p[0] for p in petroleras],
         'sectores': [s[0] for s in sectores],
         'productos': ['GO2', 'GO3', 'N2', 'N3'],
@@ -149,26 +174,34 @@ def api_filtros():
 @app.route('/api/volumenes')
 @login_required(1)
 def api_volumenes():
+    anios = _lista('anios')
+    meses = _lista('meses')
+    productos = _lista('productos')
+    sectores = _lista('sectores')
+    petroleras = _lista('petroleras')
     anio_desde = request.args.get('anio_desde', type=int)
     anio_hasta = request.args.get('anio_hasta', type=int)
-    productos = [p.strip() for p in request.args.get('productos', 'GO2,GO3,N2,N3').split(',') if p.strip()]
-    sectores = [s.strip() for s in request.args.get('sectores', '').split(',') if s.strip()]
-    petroleras = [p.strip() for p in request.args.get('petroleras', '').split(',') if p.strip()]
 
     q = db.session.query(
         VolumeMonthly.provincia,
         VolumeMonthly.producto,
         func.sum(VolumeMonthly.volumen).label('total')
     )
-    if anio_desde:
-        q = q.filter(VolumeMonthly.anio >= anio_desde)
-    if anio_hasta:
-        q = q.filter(VolumeMonthly.anio <= anio_hasta)
-    if productos:
+    if anios is not None:
+        q = q.filter(VolumeMonthly.anio.in_(_enteros(anios)))
+    else:
+        # compatibilidad con el rango desde/hasta que usaba la version anterior
+        if anio_desde:
+            q = q.filter(VolumeMonthly.anio >= anio_desde)
+        if anio_hasta:
+            q = q.filter(VolumeMonthly.anio <= anio_hasta)
+    if meses is not None:
+        q = q.filter(VolumeMonthly.mes.in_(_enteros(meses)))
+    if productos is not None:
         q = q.filter(VolumeMonthly.producto.in_(productos))
-    if sectores:
+    if sectores is not None:
         q = q.filter(VolumeMonthly.sector.in_(sectores))
-    if petroleras:
+    if petroleras is not None:
         q = q.filter(VolumeMonthly.petrolera.in_(petroleras))
 
     q = q.group_by(VolumeMonthly.provincia, VolumeMonthly.producto)

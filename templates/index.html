@@ -32,6 +32,42 @@
     }
     .chk-group { display: flex; flex-wrap: wrap; gap: .4rem; }
     .chk-group label { display: flex; align-items: center; gap: .3rem; font-size: .8rem; color: #cbd5e1; cursor: pointer; }
+
+    /* Desplegable multi-seleccion. El panel se expande en el flujo (no flotante)
+       porque el sidebar tiene overflow-y:auto y recortaria un panel absoluto. */
+    .ms { margin-bottom: .6rem; }
+    .ms-btn {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      gap: .4rem; padding: .4rem .5rem; border-radius: 6px; border: 1px solid #475569;
+      background: #1e293b; color: #e2e8f0; font-size: .85rem; font-family: inherit;
+      cursor: pointer; text-align: left;
+    }
+    .ms-btn:hover { border-color: #64748b; }
+    .ms.abierto .ms-btn { border-color: #0ea5e9; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .ms-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ms-sum.parcial { color: #fbbf24; }
+    .ms-sum.vacio { color: #f87171; }
+    .ms-car { color: #94a3b8; font-size: .7rem; flex-shrink: 0; }
+    .ms.abierto .ms-car { transform: rotate(180deg); }
+    .ms-panel {
+      border: 1px solid #0ea5e9; border-top: none;
+      border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+      background: #0f172a; padding: .4rem;
+    }
+    .ms-panel[hidden] { display: none; }
+    .ms-acts { display: flex; gap: .3rem; margin-bottom: .35rem; }
+    .ms-acts button {
+      flex: 1; padding: .25rem; border: 1px solid #334155; border-radius: 4px;
+      background: #1e293b; color: #94a3b8; font-size: .7rem; font-family: inherit; cursor: pointer;
+    }
+    .ms-acts button:hover { background: #334155; color: #e2e8f0; }
+    .ms-list { max-height: 168px; overflow-y: auto; display: flex; flex-direction: column; gap: .1rem; }
+    .ms-list label {
+      display: flex; align-items: center; gap: .4rem; margin: 0; padding: .2rem .3rem;
+      font-size: .8rem; color: #cbd5e1; cursor: pointer; border-radius: 4px;
+    }
+    .ms-list label:hover { background: #1e293b; }
+    .ms-vacio { font-size: .72rem; color: #64748b; padding: .3rem; }
     button.apply {
       width: 100%; padding: .55rem; border: none; border-radius: 6px;
       background: #0ea5e9; color: #fff; font-weight: 600; cursor: pointer; font-size: .9rem;
@@ -88,29 +124,24 @@
   <div class="sidebar">
     <div class="panel">
       <h3>Filtros</h3>
-      <label>Año desde / hasta</label>
-      <div style="display:flex;gap:.4rem">
-        <input type="number" id="anioDesde" placeholder="2010" style="width:50%">
-        <input type="number" id="anioHasta" placeholder="2026" style="width:50%">
-      </div>
+      <label>Años</label>
+      <div class="ms" id="msAnios"></div>
+      <label>Meses</label>
+      <div class="ms" id="msMeses"></div>
       <label>Productos</label>
-      <div class="chk-group" id="chkProductos">
-        <label><input type="checkbox" value="GO2" checked> GO2</label>
-        <label><input type="checkbox" value="GO3" checked> GO3</label>
-        <label><input type="checkbox" value="N2" checked> N2</label>
-        <label><input type="checkbox" value="N3" checked> N3</label>
-      </div>
-      <label style="margin-top:.5rem">Petroleras</label>
-      <div class="chk-group" id="chkPetroleras"></div>
-      <label style="margin-top:.5rem">Sectores</label>
-      <select id="selSectores" multiple size="4" style="height:auto"></select>
-      <button class="apply" onclick="cargarMapa()" style="margin-top:.7rem">Aplicar</button>
+      <div class="ms" id="msProductos"></div>
+      <label>Petroleras</label>
+      <div class="ms" id="msPetroleras"></div>
+      <label>Sectores</label>
+      <div class="ms" id="msSectores"></div>
+      <button class="apply" onclick="cargarMapa()" style="margin-top:.4rem">Aplicar</button>
     </div>
 
     <div class="panel">
       <h3>Total filtrado</h3>
       <div class="stat" id="totalGeneral">—</div>
       <div class="stat-label">m³ (aprox.)</div>
+      <div class="stat-label" id="sinDatos" style="display:none;color:#f87171;margin-top:.4rem"></div>
     </div>
 
     <div class="panel prov-detail" id="provDetail">
@@ -192,37 +223,88 @@ function formatNum(n) {
   return n.toFixed(0);
 }
 
+const MESES_NOMBRE = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                      'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const filtros = {};
+
+function escaparAttr(v) {
+  return String(v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+// Desplegable de multi-seleccion con "Seleccionar todo" / "Ninguno".
+function crearMultiSelect(contenedorId, items, nombre) {
+  const cont = document.getElementById(contenedorId);
+  cont.innerHTML = `
+    <button class="ms-btn" type="button">
+      <span class="ms-sum"></span><span class="ms-car">▼</span>
+    </button>
+    <div class="ms-panel" hidden>
+      <div class="ms-acts">
+        <button type="button" data-acc="todos">Seleccionar todo</button>
+        <button type="button" data-acc="ninguno">Ninguno</button>
+      </div>
+      <div class="ms-list"></div>
+    </div>`;
+  const btn   = cont.querySelector('.ms-btn');
+  const sum   = cont.querySelector('.ms-sum');
+  const panel = cont.querySelector('.ms-panel');
+  const lista = cont.querySelector('.ms-list');
+
+  lista.innerHTML = items.length
+    ? items.map(it => `<label><input type="checkbox" value="${escaparAttr(it.valor)}" checked> ${it.etiqueta}</label>`).join('')
+    : `<div class="ms-vacio">Sin ${nombre} disponibles</div>`;
+
+  const inputs = () => Array.from(lista.querySelectorAll('input'));
+  const marcados = () => inputs().filter(i => i.checked);
+
+  function actualizarResumen() {
+    const total = inputs().length, n = marcados().length;
+    sum.classList.toggle('parcial', n > 0 && n < total);
+    sum.classList.toggle('vacio', total > 0 && n === 0);
+    if (!total)            sum.textContent = '—';
+    else if (n === total)  sum.textContent = `Todos (${total})`;
+    else if (n === 0)      sum.textContent = 'Ninguno';
+    else if (n === 1)      sum.textContent = marcados()[0].parentNode.textContent.trim();
+    else                   sum.textContent = `${n} de ${total}`;
+  }
+
+  btn.addEventListener('click', () => {
+    panel.hidden = !cont.classList.toggle('abierto');
+  });
+  lista.addEventListener('change', actualizarResumen);
+  cont.querySelector('[data-acc="todos"]').addEventListener('click', () => {
+    inputs().forEach(i => { i.checked = true; }); actualizarResumen();
+  });
+  cont.querySelector('[data-acc="ninguno"]').addEventListener('click', () => {
+    inputs().forEach(i => { i.checked = false; }); actualizarResumen();
+  });
+
+  actualizarResumen();
+  filtros[contenedorId] = { valores: () => marcados().map(i => i.value) };
+  return filtros[contenedorId];
+}
+
 async function initFiltros() {
   const r = await fetch('/api/filtros');
   const d = await r.json();
-  if (d.anios.length) {
-    document.getElementById('anioDesde').value = d.anios[0];
-    document.getElementById('anioHasta').value = d.anios[d.anios.length-1];
-  }
-  const chkP = document.getElementById('chkPetroleras');
-  d.petroleras.forEach(p => {
-    const lab = document.createElement('label');
-    lab.innerHTML = `<input type="checkbox" value="${p}" checked> ${p}`;
-    chkP.appendChild(lab);
-  });
-  const sel = document.getElementById('selSectores');
-  d.sectores.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s; opt.textContent = s; opt.selected = true;
-    sel.appendChild(opt);
-  });
+  const simple = v => ({ valor: v, etiqueta: v });
+  crearMultiSelect('msAnios',      (d.anios || []).map(simple), 'años');
+  crearMultiSelect('msMeses',      (d.meses || []).map(m => ({ valor: m, etiqueta: MESES_NOMBRE[m-1] || m })), 'meses');
+  crearMultiSelect('msProductos',  (d.productos || []).map(simple), 'productos');
+  crearMultiSelect('msPetroleras', (d.petroleras || []).map(simple), 'petroleras');
+  crearMultiSelect('msSectores',   (d.sectores || []).map(simple), 'sectores');
 }
 
 async function cargarMapa() {
-  const anioDesde = document.getElementById('anioDesde').value;
-  const anioHasta = document.getElementById('anioHasta').value;
-  const productos = [...document.querySelectorAll('#chkProductos input:checked')].map(c => c.value).join(',');
-  const petroleras = [...document.querySelectorAll('#chkPetroleras input:checked')].map(c => c.value).join(',');
-  const sectores = [...document.getElementById('selSectores').selectedOptions].map(o => o.value).join(',');
-
-  const params = new URLSearchParams({ productos, petroleras, sectores });
-  if (anioDesde) params.set('anio_desde', anioDesde);
-  if (anioHasta) params.set('anio_hasta', anioHasta);
+  // Una lista vacia viaja como parametro vacio: el backend lo entiende como
+  // "no seleccionaron nada" y devuelve cero, distinto de no filtrar.
+  const params = new URLSearchParams({
+    anios:      filtros.msAnios.valores().join(','),
+    meses:      filtros.msMeses.valores().join(','),
+    productos:  filtros.msProductos.valores().join(','),
+    petroleras: filtros.msPetroleras.valores().join(','),
+    sectores:   filtros.msSectores.valores().join(','),
+  });
 
   const r = await fetch('/api/volumenes?' + params);
   currentData = await r.json();
@@ -235,6 +317,20 @@ async function cargarMapa() {
     sumTotal += d.total;
   });
   document.getElementById('totalGeneral').textContent = formatNum(sumTotal);
+
+  // Con algun filtro en "Ninguno" no vuelve nada: conviene decir por que el
+  // mapa quedo vacio en vez de mostrar un cero sin explicacion.
+  const vacios = ['msAnios','msMeses','msProductos','msPetroleras','msSectores']
+    .filter(k => filtros[k].valores().length === 0);
+  const aviso = document.getElementById('sinDatos');
+  if (!Object.keys(currentData).length) {
+    aviso.style.display = 'block';
+    aviso.textContent = vacios.length
+      ? 'Sin datos: no hay nada seleccionado en ' + vacios.length + ' filtro(s).'
+      : 'Sin datos para esta combinación de filtros.';
+  } else {
+    aviso.style.display = 'none';
+  }
 
   const legend = document.getElementById('legend');
   legend.innerHTML = '';

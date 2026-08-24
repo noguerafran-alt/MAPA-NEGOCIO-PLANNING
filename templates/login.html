@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Mapa Gasoil & Naftas</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #e2e8f0;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 2.5rem;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,.5);
+    }
+    h1 { font-size: 1.4rem; margin-bottom: .3rem; color: #f8fafc; }
+    .sub { color: #94a3b8; font-size: .9rem; margin-bottom: 1.8rem; }
+    label { display: block; font-size: .85rem; color: #94a3b8; margin-bottom: .35rem; }
+    input {
+      width: 100%; padding: .7rem .9rem; border-radius: 8px;
+      border: 1px solid #475569; background: #0f172a; color: #f1f5f9;
+      font-size: 1rem; margin-bottom: 1.1rem;
+    }
+    input:focus { outline: none; border-color: #38bdf8; }
+    button {
+      width: 100%; padding: .75rem; border: none; border-radius: 8px;
+      background: #0ea5e9; color: #fff; font-weight: 600; font-size: 1rem;
+      cursor: pointer; transition: background .15s;
+    }
+    button:hover { background: #0284c7; }
+    .error {
+      background: #7f1d1d; color: #fecaca; padding: .7rem; border-radius: 8px;
+      margin-bottom: 1rem; font-size: .9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Mapa Gasoil & Naftas</h1>
+    <p class="sub">Análisis de ventas por provincia</p>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="post">
+      <label>Email</label>
+      <input type="email" name="email" required autofocus placeholder="vos@empresa.com">
+      <label>Contraseña</label>
+      <input type="password" name="password" required>
+      <button type="submit">Ingresar</button>
+    </form>
+  </div>
+</body>
+</html>

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modelo — Cómo se calculan las estimaciones</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .6rem 1.2rem; background: #1e293b; border-bottom: 1px solid #334155;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+    nav a { color: #94a3b8; text-decoration: none; margin-left: 1.2rem; font-size: .9rem; }
+    nav a:hover, nav a.active { color: #38bdf8; }
+    .content { max-width: 900px; margin: 1.5rem auto 3rem; padding: 0 1rem; line-height: 1.6; }
+    h2 {
+      font-size: 1.05rem; color: #38bdf8; margin: 2rem 0 .6rem;
+      padding-bottom: .35rem; border-bottom: 1px solid #334155;
+    }
+    h3 { font-size: .92rem; color: #e2e8f0; margin: 1.2rem 0 .4rem; }
+    p { font-size: .87rem; color: #cbd5e1; margin: .5rem 0; }
+    ul { margin: .5rem 0 .5rem 1.1rem; }
+    li { font-size: .87rem; color: #cbd5e1; margin: .25rem 0; }
+    b { color: #e2e8f0; }
+    code, .mono {
+      font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+      font-size: .82rem; color: #7dd3fc;
+    }
+    .lead {
+      background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+      padding: 1rem 1.1rem; font-size: .87rem; color: #cbd5e1;
+    }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .7rem; margin: .8rem 0; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: .7rem .8rem; }
+    .card .label { font-size: .68rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .02em; }
+    .card .value { font-size: 1.15rem; font-weight: 700; color: #38bdf8; margin-top: .15rem; }
+    .card .hint { font-size: .66rem; color: #64748b; margin-top: .2rem; }
+    .formula {
+      background: #0b1220; border: 1px solid #334155; border-radius: 8px;
+      padding: .7rem .9rem; margin: .7rem 0; font-family: ui-monospace, Consolas, monospace;
+      font-size: .86rem; color: #7dd3fc; overflow-x: auto;
+    }
+    table { width: 100%; border-collapse: collapse; margin: .7rem 0; font-size: .82rem; }
+    th, td { text-align: left; padding: .4rem .55rem; border-bottom: 1px solid #334155; }
+    th { color: #94a3b8; font-weight: 600; font-size: .72rem; text-transform: uppercase; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr.destacada td { background: #172554; color: #e0f2fe; font-weight: 600; }
+    .aviso {
+      border-radius: 8px; padding: .8rem 1rem; margin: .9rem 0;
+      font-size: .84rem; line-height: 1.55; background: #1e293b;
+      border: 1px solid #334155; border-left: 3px solid #f59e0b; color: #cbd5e1;
+    }
+    .aviso b { color: #fbbf24; }
+    .aviso.rojo { border-left-color: #ef4444; }
+    .aviso.rojo b { color: #fca5a5; }
+    .aviso.verde { border-left-color: #22c55e; }
+    .aviso.verde b { color: #86efac; }
+    .tag {
+      display: inline-block; font-size: .66rem; padding: .1rem .4rem; border-radius: 4px;
+      background: #334155; color: #cbd5e1; margin-left: .4rem; vertical-align: middle;
+    }
+    .tag.vivo { background: #14532d; color: #86efac; }
+    .tag.off  { background: #422006; color: #fdba74; }
+    .fuente { font-size: .72rem; color: #64748b; margin-top: .4rem; }
+    .tabla-scroll { overflow-x: auto; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🧮 Modelo — cómo se calcula lo que no es dato real</h1>
+  <nav>
+    <a href="/">Mapa</a>
+    <a href="/proyecciones">Proyecciones</a>
+    <a href="/modelo" class="active">Modelo</a>
+    {% if user.nivel >= 2 %}<a href="/admin">Admin</a>{% endif %}
+    <a href="/logout">Salir</a>
+  </nav>
+</header>
+
+<div class="content">
+
+  <div class="lead">
+    En la app conviven <b>dos modelos distintos</b>, y no son el mismo con dos nombres:
+    <ul>
+      <li><b>Regresión lineal múltiple</b> (pantalla <a href="/proyecciones" style="color:#38bdf8">Proyecciones</a>):
+        explica el <b>total país</b> a partir de cuatro índices macro X1–X4.</li>
+      <li><b>Naive estacional</b> (mapa, casilla «Estimar meses sin dato real»):
+        estima <b>un año hacia adelante</b> al grano de provincia × producto ×
+        petrolera × sector.</li>
+    </ul>
+    El mapa <b>no usa la regresión</b>. Lo que se ve en los círculos con borde
+    punteado ámbar sale del naive estacional.
+  </div>
+
+  <h2>Los datos sobre los que corre todo</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="label">Filas cargadas</div>
+      <div class="value">{{ '{:,}'.format(filas).replace(',', '.') }}</div>
+      <div class="hint">volumen mensual</div>
+    </div>
+    <div class="card">
+      <div class="label">Período</div>
+      <div class="value">{{ anio_min or '—' }}–{{ anio_max or '—' }}</div>
+      <div class="hint">último mes: {{ ultimo_periodo or '—' }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Series</div>
+      <div class="value">{{ '{:,}'.format(series).replace(',', '.') }}</div>
+      <div class="hint">prov × prod × petrolera × sector</div>
+    </div>
+    <div class="card">
+      <div class="label">Puntos regresión</div>
+      <div class="value">{{ puntos_regresion }}</div>
+      <div class="hint">filas Año/Mes/X1–X4</div>
+    </div>
+  </div>
+
+  <h2>1. Regresión lineal múltiple — total país <span class="tag vivo">en uso</span></h2>
+
+  <p>Modelo sin transformaciones: una combinación lineal de cuatro regresores.</p>
+  <div class="formula">Yt = b0 + b1·X1 + b2·X2 + b3·X3 + b4·X4</div>
+
+  <h3>Parámetros guardados hoy</h3>
+  {% if cfg %}
+  <div class="tabla-scroll">
+  <table>
+    <tr><th>Parámetro</th><th class="num">Valor</th><th>Qué es</th></tr>
+    <tr><td class="mono">b0</td><td class="num mono">{{ '%.6g'|format(cfg.b0 or 0) }}</td>
+        <td>término independiente — el Excel no lo traía, entra en 0</td></tr>
+    <tr><td class="mono">b1</td><td class="num mono">{{ '%.6g'|format(cfg.b1) }}</td><td>coeficiente de X1</td></tr>
+    <tr><td class="mono">b2</td><td class="num mono">{{ '%.6g'|format(cfg.b2) }}</td><td>coeficiente de X2</td></tr>
+    <tr><td class="mono">b3</td><td class="num mono">{{ '%.6g'|format(cfg.b3) }}</td><td>coeficiente de X3</td></tr>
+    <tr><td class="mono">b4</td><td class="num mono">{{ '%.6g'|format(cfg.b4) }}</td><td>coeficiente de X4</td></tr>
+    <tr><td class="mono">MAPE</td>
+        <td class="num mono">{% if cfg.mape is not none %}{{ '%.2f'|format(cfg.mape * 100) }}%{% else %}—{% endif %}</td>
+        <td>error porcentual medio — se lee como fracción, igual que en Proyecciones<sup>*</sup></td></tr>
+    <tr><td class="mono">R²</td>
+        <td class="num mono">{% if cfg.r2 is not none %}{{ '%.4f'|format(cfg.r2) }}{% else %}—{% endif %}</td>
+        <td>varianza explicada declarada</td></tr>
+  </table>
+  </div>
+  <p class="fuente">Guardados en <code>regression_config</code>{% if cfg.updated_at %},
+    última actualización {{ cfg.updated_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}.
+    Son editables desde Proyecciones — no están fijos en el código.</p>
+  <div class="aviso">
+    <sup>*</sup><b>Ojo con la unidad del MAPE.</b> El campo guarda una
+    <b>fracción</b> cuando lo calcula «Ajustar por mínimos cuadrados» (0,0526 =
+    5,26%), pero el importador del Excel guarda ahí el número tal cual viene de
+    la hoja, que está en <b>puntos porcentuales</b> (2,803 = 2,803%). Esta
+    pantalla y Proyecciones lo muestran igual — multiplicado por 100 — así que
+    un MAPE recién importado del Excel se ve 100 veces más grande de lo que es.
+    Es una inconsistencia del importador, no de esta página.
+  </div>
+  {% else %}
+  <div class="aviso rojo">
+    <b>No hay modelo cargado.</b> Subí el Excel de regresión desde Admin para que
+    esta sección muestre los coeficientes.
+  </div>
+  {% endif %}
+
+  <h3>Lo que hay que saber antes de confiar en estos números</h3>
+
+  <div class="aviso rojo">
+    <b>Los coeficientes del Excel original no reproducen la serie.</b>
+    Calculando <span class="mono">b1·X1 + b2·X2 + b3·X3 + b4·X4</span> con los X de
+    la propia hoja (índices ~100) da <b>32–66 M</b>, contra un Yt real de
+    <b>0,79–1,30 M</b>: MAPE 4.313%.
+  </div>
+
+  <ul>
+    <li>Se probaron <b>384 combinaciones</b> (8 transformaciones × 24
+      permutaciones × con y sin intercepto). El mejor MAPE alcanzable es <b>52%</b>.</li>
+    <li>El <b>R² máximo posible</b> de un modelo lineal sobre esas cuatro
+      columnas es <b>0,7642</b> — mínimos cuadrados lo maximiza por definición.
+      El <b>0,8704</b> que declara la hoja es <b>inalcanzable</b>, lo que prueba
+      que el modelo original se ajustó sobre <b>otras variables</b>, no sobre las
+      columnas D–G del archivo.</li>
+    <li>La hoja tiene valores pegados, sin fórmulas: no dice de dónde salieron.</li>
+    <li><b>Qué es la columna Yt</b>: no es GO3 ni el total país. Contra los
+      volúmenes reales es <b>GO2+GO3, el gasoil total</b> (diferencia mediana
+      0,211%, correlación 0,966). Las etiquetas originales
+      («Gasoil + Nafta total país», «GO3») eran incorrectas.</li>
+  </ul>
+
+  <p>Por eso los coeficientes son <b>editables en pantalla</b> en vez de estar
+     fijos: no hay forma de derivar el modelo correcto desde el archivo.</p>
+
+  <h3>Ajuste por mínimos cuadrados sobre las columnas disponibles</h3>
+  <div class="tabla-scroll">
+  <table>
+    <tr><th>Contra qué se ajusta</th><th class="num">MAPE</th><th class="num">R²</th></tr>
+    <tr><td>Gasoil (GO2+GO3) — lo que realmente es Yt</td><td class="num">2,99%</td><td class="num">0,762</td></tr>
+    <tr><td>Total país (lo que muestra la app hoy)</td><td class="num">5,26%</td><td class="num">0,528</td></tr>
+  </table>
+  </div>
+  <p>Los X explican mejor el gasoil que el total, algo esperable si se eligieron
+     para gasoil. El botón «Ajustar por mínimos cuadrados» de Proyecciones
+     calcula estos coeficientes en el momento.</p>
+
+  <h2>2. Estimación de un año hacia adelante — el mapa <span class="tag vivo">en uso</span></h2>
+
+  <p>Cada mes sin dato se estima con <b>el mismo mes del último año que sí lo
+     tenga</b>. Nada más: sin factor de crecimiento, sin tendencia.</p>
+  <div class="formula">estimado(año A, mes M) = volumen(último año &lt; A con dato en M, mes M)</div>
+
+  <div class="aviso verde">
+    <b>No es una simplificación.</b> Se midió contra todo lo razonable en
+    backtest sobre los datos reales y ganó siempre.
+  </div>
+
+  <h3>Backtest a 12 meses, al grano del mapa</h3>
+  <p class="fuente">4.497 series de provincia × producto × petrolera × sector.
+     WAPE promedio sobre 2023, 2024 y 2025.</p>
+  <div class="tabla-scroll">
+  <table>
+    <tr><th>Método</th><th class="num">WAPE</th></tr>
+    <tr class="destacada"><td>Naive estacional <span class="tag vivo">el que corre</span></td><td class="num">17,8%</td></tr>
+    <tr><td>× factor por producto amortiguado</td><td class="num">18,6%</td></tr>
+    <tr><td>× factor global</td><td class="num">19,2%</td></tr>
+    <tr><td>× factor por serie amortiguado</td><td class="num">19,7%</td></tr>
+    <tr><td>× factor por serie</td><td class="num">23,9%</td></tr>
+  </table>
+  </div>
+
+  <h3>Por qué no sirve aplicarle crecimiento</h3>
+  <p>El <b>CAGR real del total país es ~1,00</b> (0,995 a 3 años, 1,007 a 8): el
+     total no crece. Lo que se mueve es la <b>mezcla</b> — GO3 se cuadruplicó
+     desde 2010 y GO2 cayó a 0,81× — y se compensa. Sin tendencia agregada que
+     extrapolar, un factor sólo suma ruido, y elevado a la potencia <span class="mono">h</span>
+     lo amplifica: las alternativas multi-horizonte llegan al 58%–66%.</p>
+
+  <div class="aviso">
+    <b>Consecuencia visible:</b> todos los años futuros dan el mismo número.
+    No es un bug — el método repite el último año con dato, y está dicho en el
+    aviso del mapa.
+  </div>
+
+  <h3>Error medido según el horizonte</h3>
+  <p class="fuente">Es la tabla <code>ERROR_POR_HORIZONTE</code> de
+     <code>app.py</code>, la misma que usa el mapa para etiquetar los años futuros.</p>
+  <div class="tabla-scroll">
+  <table>
+    <tr><th>Años de distancia al último dato</th><th class="num">WAPE medido</th></tr>
+    {% for h, err in error_horizonte.items() %}
+    <tr><td>{{ h }} año{% if h > 1 %}s{% endif %}</td><td class="num">±{{ '%.1f'|format(err) }}%</td></tr>
+    {% endfor %}
+  </table>
+  </div>
+
+  <h3>Por qué se ofrece un solo año</h3>
+  <p>El horizonte de cada mes es la distancia al último año que tiene
+     <b>ese mes</b>, y no es uniforme: con datos hasta {{ ultimo_periodo or 'el último mes cargado' }},
+     los meses de enero a junio del año siguiente están a 1 año y los de julio a
+     diciembre a 2. Por eso un año se etiqueta con <b>su peor horizonte</b>, no
+     con el mejor.</p>
+  <ul>
+    <li><code>ANIOS_FUTUROS = {{ anios_futuros }}</code> — cuántos años se ofrecen.</li>
+    <li>No se ofrece un año cuyo peor horizonte quede fuera de la tabla de errores
+        medidos: sin número medido, no habría con qué acompañar la estimación.</li>
+    {% if estimables %}
+    <li>Con los datos cargados hoy se ofrece:
+      {% for e in estimables %}<b>{{ e.anio }}</b> (horizonte {{ e.horizonte }},
+        ±{{ '%.0f'|format(e.error) }}%){% if not loop.last %}, {% endif %}{% endfor %}.</li>
+    {% endif %}
+  </ul>
+
+  <h2>3. Machine learning — qué se probó y por qué no está en producción
+      <span class="tag off">fuera de uso</span></h2>
+
+  <div class="aviso">
+    <b>La app no ejecuta ningún modelo de ML.</b> No hay scikit-learn ni ningún
+    otro framework en <code>requirements.txt</code>: el gradient boosting se
+    evaluó <b>offline</b>, en backtest, y se descartó para el horizonte que
+    necesita el mapa. Esta sección deja registrado el resultado para no repetir
+    el experimento.
+  </div>
+
+  <h3>Configuración evaluada</h3>
+  <div class="tabla-scroll">
+  <table>
+    <tr><th>Parámetro</th><th>Valor</th></tr>
+    <tr><td>Algoritmo</td><td class="mono">HistGradientBoostingRegressor</td></tr>
+    <tr><td>Hiperparámetros</td><td>casi por defecto — no se hizo búsqueda</td></tr>
+    <tr><td>Grano</td><td>provincia × producto (96 series)</td></tr>
+    <tr><td>Features</td><td>lags de la propia serie y estacionalidad</td></tr>
+    <tr><td>Features macro X1–X4</td><td><b>empeoran</b> el resultado</td></tr>
+    <tr><td>Validación</td><td>backtest sobre 2023, 2024 y 2025</td></tr>
+  </table>
+  </div>
+
+  <h3>Resultado, por horizonte</h3>
+  <p class="fuente">WAPE a nivel provincia × producto — grano más grueso que la
+     tabla del mapa, por eso los números son más bajos.</p>
+  <div class="tabla-scroll">
+  <table>
+    <tr><th>Horizonte</th><th class="num">Naive estacional</th><th class="num">Naive mes anterior</th><th class="num">GBM</th></tr>
+    <tr><td>12 meses</td><td class="num">8,6%</td><td class="num">—</td><td class="num">9,8%–10,9%</td></tr>
+    <tr><td>1 mes</td><td class="num">8,6%</td><td class="num">7,8%</td><td class="num"><b>6,4%</b></td></tr>
+  </table>
+  </div>
+
+  <p><b>Por qué pierde a 12 meses:</b> los árboles no extrapolan. Subestiman
+     justo los productos que crecen — GO3 −14,2% y N3 −19,4% en 2025. A 1 mes,
+     con los últimos lags disponibles, ganan claro. XGBoost y CatBoost son de la
+     misma familia y no cambiarían el fondo.</p>
+
+  <div class="aviso">
+    <b>Qué cambiaría el veredicto a 12 meses:</b> drivers exógenos por provincia
+    — precio, parque automotor, cosecha. Cuatro índices nacionales no alcanzan
+    para explicar 96 series provinciales.
+  </div>
+
+  <div class="aviso verde">
+    <b>Dónde sí serviría hoy:</b> un pronóstico a <b>1 mes</b> del próximo mes
+    aún no cargado. Es el único horizonte donde el GBM le gana al naive
+    (6,4% contra 8,6%), y hoy la app no ofrece esa vista.
+  </div>
+
+  <p class="fuente">Todo lo de esta página está documentado con más detalle en
+     <code>ESTADO.md</code> del repositorio.</p>
+
+</div>
+</body>
+</html>

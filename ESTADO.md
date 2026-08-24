@@ -21,11 +21,41 @@
 - **Rutas nacionales**: capa GeoJSON con las 101 rutas, en un pane propio con
   z-index 350 para quedar por debajo de los círculos (overlayPane = 400).
   Toggle en el sidebar.
+- **Recuadro de provincia** (clic en un círculo): total, y cada producto con
+  volumen **y porcentaje sobre el total de la provincia**. Trae un selector de
+  **petrolera** propio que no es local al recuadro: escribe sobre el
+  multi-select de petroleras del panel derecho y recarga el mapa, así el
+  recuadro, el total filtrado y los círculos nunca muestran selecciones
+  distintas. "Todas" vuelve a marcar todas las petroleras.
+- **Resaltado del territorio**: al fijar una provincia se sombrea su polígono
+  en gris (`fillOpacity` 0.18) con el límite marcado. Va en un pane propio con
+  z-index 340, por debajo de las rutas (350) y de los círculos (400).
+  **Buenos Aires y CABA se resaltan siempre juntas** — se leen como una sola
+  región, aunque el recuadro siga mostrando los volúmenes de la que se tocó.
+  Los polígonos salen de `static/provincias.geojson`.
 - **Estimación de meses futuros** (opt-in, ver más abajo).
 - **Panel de comparación** a la izquierda: se abre con "Comparar con otra
   selección", tiene los mismos filtros y muestra A / B / B−A. Con "También
   filtrar el mapa" el mapa pasa a mostrar la diferencia (radio = magnitud,
   verde si B es mayor, rojo si es menor).
+
+### Modelo (`/modelo`, `templates/modelo.html`)
+
+Pestaña de sólo lectura que explica los dos modelos y por qué son distintos: la
+regresión del total país y el naive estacional del mapa. Incluye los backtests
+que respaldan cada decisión y una sección con lo medido del gradient boosting,
+que **no corre en la app** — no hay scikit-learn en `requirements.txt`.
+
+Los números los pasa la ruta desde el backend (`ERROR_POR_HORIZONTE`,
+`ANIOS_FUTUROS`, los coeficientes guardados, el período y el conteo de filas):
+si cambian, la página los sigue. No hay valores escritos a mano en el HTML
+salvo los resultados de backtest, que son históricos.
+
+**Ojo con el MAPE**: `regression_config.mape` guarda una *fracción* cuando lo
+calcula «Ajustar por mínimos cuadrados» (0,0526) y *puntos porcentuales* cuando
+lo importa el Excel (2,803). Las dos pantallas lo muestran ×100, así que un
+MAPE recién importado se ve 100 veces más grande. Está avisado en la página;
+arreglarlo es normalizar en el importador.
 
 ### Proyecciones (`/proyecciones`)
 
@@ -208,6 +238,12 @@ explicación.
   volumen 0: no se dibujan y no se está ocultando nada real.
 - El panel del multi-select se expande **en el flujo**, no flotando: el sidebar
   tiene `overflow-y: auto` y recortaría un panel absoluto.
+- `static/provincias.geojson` se regenera con `tools/fetch_provincias.py`
+  (Overpass, `admin_level=4`, ODbL). Los anillos vienen como tramos sueltos y
+  hay que coserlos por extremos; los que no cierran se descartan. Simplificado
+  con Douglas-Peucker a 0,01° (~1 km): 33 MB crudos quedan en **0,15 MB** con
+  las 24 provincias. Se ignoran dos relaciones fronterizas de Chile y Paraguay
+  que la consulta trae de más.
 - `static/rutas_nacionales.geojson` se regenera con `tools/fetch_rutas.py`
   (Overpass, ODbL). Los 29.614 tramos crudos se simplifican con Douglas-Peucker
   y se cosen por ruta en 2.466 cadenas: 0,61 MB, 0,16 MB gzipped, y Leaflet

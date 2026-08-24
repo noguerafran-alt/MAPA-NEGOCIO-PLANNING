@@ -168,6 +168,39 @@ def proyecciones():
     return render_template('proyecciones.html', user=current_user())
 
 
+@app.route('/modelo')
+@login_required(1)
+def modelo():
+    """Explica los dos modelos: la regresion del total pais y la estimacion
+    del ano hacia adelante del mapa.
+
+    Los numeros los pasa el backend en vez de estar escritos en el HTML: si
+    manana cambian ERROR_POR_HORIZONTE, ANIOS_FUTUROS o los coeficientes
+    guardados, la pagina no queda contando otra cosa que la que corre.
+    """
+    cfg = RegressionConfig.query.order_by(RegressionConfig.id.desc()).first()
+    periodo = db.session.query(
+        func.min(VolumeMonthly.anio), func.max(VolumeMonthly.anio)).first()
+    ultimo = db.session.query(VolumeMonthly.anio, VolumeMonthly.mes).order_by(
+        VolumeMonthly.anio.desc(), VolumeMonthly.mes.desc()).first()
+    reales = {(a, m) for a, m in
+              db.session.query(VolumeMonthly.anio, VolumeMonthly.mes).distinct()}
+    return render_template(
+        'modelo.html', user=current_user(),
+        cfg=cfg,
+        error_horizonte=ERROR_POR_HORIZONTE,
+        anios_futuros=ANIOS_FUTUROS,
+        filas=db.session.query(func.count(VolumeMonthly.id)).scalar() or 0,
+        series=db.session.query(func.count(func.distinct(
+            VolumeMonthly.provincia + '|' + VolumeMonthly.producto + '|' +
+            VolumeMonthly.petrolera + '|' + VolumeMonthly.sector))).scalar() or 0,
+        anio_min=periodo[0], anio_max=periodo[1],
+        ultimo_periodo=(f'{ultimo[0]}-{ultimo[1]:02d}' if ultimo else None),
+        estimables=_anios_estimables(reales),
+        puntos_regresion=db.session.query(func.count(RegressionPoint.id)).scalar() or 0,
+    )
+
+
 @app.route('/admin')
 @login_required(2)
 def admin():

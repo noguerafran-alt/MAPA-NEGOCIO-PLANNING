@@ -211,6 +211,25 @@
     backtest sobre los datos reales y ganó siempre.
   </div>
 
+  <h3>Qué es el WAPE, la métrica con la que se mide todo esto</h3>
+
+  <p><b>Weighted Absolute Percentage Error</b> — error absoluto porcentual
+     ponderado:</p>
+  <div class="formula">WAPE = Σ|real − estimado| / Σ|real|</div>
+  <p>Se suman todos los errores en m³ y se dividen por el volumen total real.
+     Un WAPE de 17,8% se lee así: <b>sumando todo lo que erramos en metros
+     cúbicos, eso representa el 17,8% del volumen que realmente se vendió</b>.</p>
+
+  <div class="aviso">
+    <b>Por qué WAPE y no MAPE.</b> El MAPE —el que muestra Proyecciones para la
+    regresión— calcula el error porcentual de cada serie por separado y después
+    promedia. Con 4.497 series eso se rompe: una serie que vendió 3 m³ y se
+    estimó en 6 aporta un error de 100%, y pesa lo mismo que Buenos Aires
+    errándole por 2%. El WAPE <b>pondera por volumen</b>, así que una serie chica
+    hace poco ruido y el número refleja el error del negocio en vez del promedio
+    de miles de porcentajes inestables.
+  </div>
+
   <h3>Backtest a 12 meses, al grano del mapa</h3>
   <p class="fuente">4.497 series de provincia × producto × petrolera × sector.
      WAPE promedio sobre 2023, 2024 y 2025.</p>
@@ -230,7 +249,26 @@
      total no crece. Lo que se mueve es la <b>mezcla</b> — GO3 se cuadruplicó
      desde 2010 y GO2 cayó a 0,81× — y se compensa. Sin tendencia agregada que
      extrapolar, un factor sólo suma ruido, y elevado a la potencia <span class="mono">h</span>
-     lo amplifica: las alternativas multi-horizonte llegan al 58%–66%.</p>
+     lo amplifica: a 2 y 3 años las alternativas con CAGR llegan al <b>58%–66%</b>
+     de WAPE, contra 23,1% y 28,9% del naive.</p>
+
+  <div class="aviso">
+    <b>Mirá el patrón de la tabla: cuanto más fino el factor, peor anda.</b>
+    El factor por serie (23,9%) es el peor de todos, porque estimar una
+    tendencia sobre una serie chica es estimar ruido. El global, que promedia
+    sobre todo, es el que menos daño hace — y aun así pierde contra no aplicar
+    nada.
+  </div>
+
+  <div class="aviso verde">
+    <b>Qué cambiaría esta decisión:</b> que aparezca una tendencia real que
+    medir. Si el total país empieza a crecer de verdad, el naive va a quedar
+    corto de forma sistemática y conviene volver a correr el backtest. También
+    cambiaría con drivers exógenos por provincia —precio, parque automotor,
+    cosecha—: ahí sí habría de dónde sacar un crecimiento diferenciado. Con los
+    datos de hoy, agregar un factor es empeorar el número a cambio de que
+    parezca más sofisticado.
+  </div>
 
   <div class="aviso">
     <b>Consecuencia visible:</b> todos los años futuros dan el mismo número.

@@ -310,6 +310,38 @@ def api_upload_regresion():
     return jsonify({'ok': True, 'coeficientes': coefs, 'puntos': len(points)})
 
 
+@app.route('/api/admin/coeficientes', methods=['POST'])
+@login_required(2)
+def api_guardar_coeficientes():
+    """Persiste los coeficientes ajustados a mano desde la pagina de proyecciones."""
+    data = request.get_json() or {}
+    cfg = RegressionConfig.query.order_by(RegressionConfig.id.desc()).first()
+    if not cfg:
+        return jsonify({'error': 'No hay modelo cargado. Subi el Excel desde Admin.'}), 404
+
+    valores = {}
+    for k in ('b1', 'b2', 'b3', 'b4'):
+        if k not in data:
+            return jsonify({'error': f'Falta {k}'}), 400
+        try:
+            valores[k] = float(data[k])
+        except (TypeError, ValueError):
+            return jsonify({'error': f'{k} no es un numero'}), 400
+
+    for k, v in valores.items():
+        setattr(cfg, k, v)
+    # MAPE y R2 los recalcula el cliente sobre la serie, con estos coeficientes.
+    for k in ('mape', 'r2'):
+        if data.get(k) is not None:
+            try:
+                setattr(cfg, k, float(data[k]))
+            except (TypeError, ValueError):
+                pass
+    cfg.nota = f'Coeficientes ajustados a mano por {current_user().email}'
+    db.session.commit()
+    return jsonify({'ok': True, 'coeficientes': valores})
+
+
 @app.route('/api/admin/stats')
 @login_required(2)
 def api_admin_stats():

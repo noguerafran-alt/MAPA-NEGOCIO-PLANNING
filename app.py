@@ -9,7 +9,7 @@ from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, inspect, text
 import click
 
 from models import (db, VolumeMonthly, VolumeUploadLog, RegressionPoint,
@@ -58,8 +58,27 @@ def login_required(min_nivel=1):
     return decorator
 
 
+def ensure_columns():
+    """Agrega columnas nuevas a tablas que ya existen.
+
+    db.create_all() crea tablas faltantes pero no altera las existentes, asi que
+    una base ya desplegada se queda sin las columnas agregadas despues. Alcanza
+    con un ALTER simple; sirve igual en SQLite y en Postgres.
+    """
+    insp = inspect(db.engine)
+    if 'regression_config' not in insp.get_table_names():
+        return
+    columnas = {c['name'] for c in insp.get_columns('regression_config')}
+    if 'b0' not in columnas:
+        db.session.execute(text(
+            'ALTER TABLE regression_config ADD COLUMN b0 FLOAT DEFAULT 0'))
+        db.session.commit()
+        app.logger.info('regression_config: columna b0 agregada')
+
+
 def ensure_tables():
     db.create_all()
+    ensure_columns()
     if Province.query.count() == 0:
         for name, (lat, lon) in PROVINCE_CENTROIDS.items():
             db.session.add(Province(
@@ -253,16 +272,17 @@ def api_proyeccion():
         return jsonify({'error': 'No hay modelo de regresión cargado. Subilo desde Admin.'}), 404
 
     points = RegressionPoint.query.order_by(RegressionPoint.anio, RegressionPoint.mes).all()
+    b0 = cfg.b0 or 0.0
     serie = []
     for p in points:
-        pred = cfg.b1 * p.x1 + cfg.b2 * p.x2 + cfg.b3 * p.x3 + cfg.b4 * p.x4
+        pred = b0 + cfg.b1 * p.x1 + cfg.b2 * p.x2 + cfg.b3 * p.x3 + cfg.b4 * p.x4
         serie.append({
             'anio': p.anio, 'mes': p.mes, 'yt': p.yt, 'predicho': pred,
             'x1': p.x1, 'x2': p.x2, 'x3': p.x3, 'x4': p.x4,
         })
 
     return jsonify({
-        'coeficientes': {'b1': cfg.b1, 'b2': cfg.b2, 'b3': cfg.b3, 'b4': cfg.b4},
+        'coeficientes': {'b0': b0, 'b1': cfg.b1, 'b2': cfg.b2, 'b3': cfg.b3, 'b4': cfg.b4},
         'mape': cfg.mape, 'r2': cfg.r2, 'serie': serie,
     })
 
@@ -334,6 +354,7 @@ def api_upload_regresion():
         cfg = RegressionConfig()
         db.session.add(cfg)
     cfg.b1, cfg.b2, cfg.b3, cfg.b4 = coefs['b1'], coefs['b2'], coefs['b3'], coefs['b4']
+    cfg.b0 = 0.0   # el Excel no trae termino independiente
     cfg.mape, cfg.r2 = coefs.get('mape'), coefs.get('r2')
     cfg.nota = f'Cargado desde {f.filename}'
     RegressionPoint.query.delete()
@@ -353,8 +374,11 @@ def api_guardar_coeficientes():
         return jsonify({'error': 'No hay modelo cargado. Subi el Excel desde Admin.'}), 404
 
     valores = {}
-    for k in ('b1', 'b2', 'b3', 'b4'):
+    for k in ('b0', 'b1', 'b2', 'b3', 'b4'):
         if k not in data:
+            if k == 'b0':          # un cliente viejo no lo manda: sin constante
+                valores[k] = 0.0
+                continue
             return jsonify({'error': f'Falta {k}'}), 400
         try:
             valores[k] = float(data[k])

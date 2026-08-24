@@ -59,12 +59,16 @@ class RegressionPoint(db.Model):
 
 
 class RegressionConfig(db.Model):
-    """Coeficientes del modelo de regresión múltiple y métricas.
-    Yt ≈ b1*X1 + b2*X2 + b3*X3 + b4*X4
-    (sin intercepto explícito en el Excel original).
+    """Coeficientes del modelo de regresión lineal múltiple y métricas.
+    Yt ≈ b0 + b1*X1 + b2*X2 + b3*X3 + b4*X4
+
+    El Excel original no trae término independiente: b0 queda en 0 al
+    importarlo, lo que reproduce exactamente el modelo sin constante.
     """
     __tablename__ = 'regression_config'
     id = db.Column(db.Integer, primary_key=True)
+    b0 = db.Column(db.Float, nullable=False, default=0.0,
+                   server_default='0')         # termino independiente
     b1 = db.Column(db.Float, nullable=False)   # coef X1
     b2 = db.Column(db.Float, nullable=False)   # coef X2
     b3 = db.Column(db.Float, nullable=False)   # coef X3

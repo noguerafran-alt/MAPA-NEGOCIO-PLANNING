@@ -49,6 +49,10 @@
       font-size: .82rem; color: #cbd5e1; line-height: 1.55;
     }
     .nota b { color: #fbbf24; }
+    .formula {
+      font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+      font-size: .85rem; color: #94a3b8; margin-bottom: .7rem;
+    }
   </style>
 </head>
 <body>
@@ -66,6 +70,8 @@
 
   <div class="nota" id="nota" style="display:none"></div>
 
+  <div class="formula">Yt = b0 + b1·X1 + b2·X2 + b3·X3 + b4·X4</div>
+
   <div class="cards" id="cards"></div>
 
   <div class="acciones">
@@ -81,7 +87,10 @@
 </div>
 <script>
 const PUEDE_GUARDAR = {{ 'true' if user.nivel >= 2 else 'false' }};
-const COEFS = ['b1','b2','b3','b4'];
+// Modelo lineal multiple: Yt = b0 + b1X1 + b2X2 + b3X3 + b4X4.
+// b0 es el termino independiente; en 0 equivale al modelo sin constante.
+const COEFS = ['b0','b1','b2','b3','b4'];
+const ETIQUETA = { b0: 'b0 (constante)', b1: 'b1 (X1)', b2: 'b2 (X2)', b3: 'b3 (X3)', b4: 'b4 (X4)' };
 
 let serie = [];        // [{anio,mes,yt,x1..x4}]
 let guardados = {};    // coeficientes tal como vinieron del backend
@@ -104,7 +113,7 @@ function coefsActuales() {
 }
 
 function predecir(p, c) {
-  return c.b1*p.x1 + c.b2*p.x2 + c.b3*p.x3 + c.b4*p.x4;
+  return c.b0 + c.b1*p.x1 + c.b2*p.x2 + c.b3*p.x3 + c.b4*p.x4;
 }
 
 // MAPE y R2 sobre los meses que tienen valor real (los futuros vienen en null).
@@ -122,41 +131,44 @@ function metricas(c) {
   return { mape: sae / reales.length, r2: sstot > 0 ? 1 - ssres/sstot : null, n: reales.length };
 }
 
-// Minimos cuadrados sobre X1..X4 (sin intercepto, como el modelo original).
-// Ecuaciones normales X'X b = X'y por eliminacion gaussiana con pivoteo parcial.
+// Minimos cuadrados del modelo lineal con constante: la primera columna del
+// diseño es 1, y de ahi sale b0. Ecuaciones normales X'X b = X'y resueltas por
+// eliminacion gaussiana con pivoteo parcial (5x5).
 function ajustarOLS() {
   const reales = serie.filter(p => p.yt != null && p.yt > 0);
-  if (reales.length < 5) return null;
-  const A = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
-  const b = [0,0,0,0];
+  const N = 5;
+  if (reales.length < N + 1) return null;
+  const A = Array.from({length: N}, () => new Array(N).fill(0));
+  const b = new Array(N).fill(0);
   reales.forEach(p => {
-    const x = [p.x1, p.x2, p.x3, p.x4];
-    for (let i = 0; i < 4; i++) {
+    const x = [1, p.x1, p.x2, p.x3, p.x4];
+    for (let i = 0; i < N; i++) {
       b[i] += x[i] * p.yt;
-      for (let j = 0; j < 4; j++) A[i][j] += x[i] * x[j];
+      for (let j = 0; j < N; j++) A[i][j] += x[i] * x[j];
     }
   });
   const M = A.map((row, i) => row.concat([b[i]]));
-  for (let col = 0; col < 4; col++) {
+  for (let col = 0; col < N; col++) {
     let piv = col;
-    for (let r = col + 1; r < 4; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+    for (let r = col + 1; r < N; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
     if (Math.abs(M[piv][col]) < 1e-12) return null;   // sistema singular
     const tmp = M[col]; M[col] = M[piv]; M[piv] = tmp;
-    for (let r = 0; r < 4; r++) {
+    for (let r = 0; r < N; r++) {
       if (r === col) continue;
       const f = M[r][col] / M[col][col];
-      for (let k = col; k <= 4; k++) M[r][k] -= f * M[col][k];
+      for (let k = col; k <= N; k++) M[r][k] -= f * M[col][k];
     }
   }
-  const sol = M.map((row, i) => row[4] / M[i][i]);
-  return sol.every(v => isFinite(v)) ? { b1: sol[0], b2: sol[1], b3: sol[2], b4: sol[3] } : null;
+  const sol = M.map((row, i) => row[N] / M[i][i]);
+  if (!sol.every(v => isFinite(v))) return null;
+  return { b0: sol[0], b1: sol[1], b2: sol[2], b3: sol[3], b4: sol[4] };
 }
 
 function pintarCards() {
   document.getElementById('cards').innerHTML =
-    COEFS.map((k, i) => `
+    COEFS.map(k => `
       <div class="card" id="card_${k}">
-        <div class="label">${k} (X${i+1})</div>
+        <div class="label">${ETIQUETA[k]}</div>
         <input type="number" step="any" id="inp_${k}">
       </div>`).join('') + `
       <div class="card"><div class="label">MAPE</div>
@@ -211,7 +223,8 @@ async function load() {
   }
   const data = await r.json();
   serie = data.serie;
-  guardados = Object.assign({}, data.coeficientes);
+  guardados = Object.assign({ b0: 0 }, data.coeficientes);
+  if (guardados.b0 == null) guardados.b0 = 0;
 
   pintarCards();
 

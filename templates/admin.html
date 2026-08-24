@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin — Gasoil & Naftas</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .6rem 1.2rem; background: #1e293b; border-bottom: 1px solid #334155;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+    nav a { color: #94a3b8; text-decoration: none; margin-left: 1.2rem; font-size: .9rem; }
+    nav a:hover, nav a.active { color: #38bdf8; }
+    .content { max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; display: flex; flex-direction: column; gap: 1.5rem; }
+    .panel {
+      background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 1.2rem;
+    }
+    .panel h2 { font-size: 1rem; margin-bottom: .8rem; color: #f1f5f9; }
+    .panel p { font-size: .85rem; color: #94a3b8; margin-bottom: .8rem; }
+    input[type=file] { margin-bottom: .6rem; color: #cbd5e1; }
+    button {
+      padding: .55rem 1.2rem; border: none; border-radius: 6px;
+      background: #0ea5e9; color: #fff; font-weight: 600; cursor: pointer; font-size: .9rem;
+    }
+    button:hover { background: #0284c7; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .msg { margin-top: .7rem; font-size: .9rem; padding: .6rem; border-radius: 6px; display: none; }
+    .msg.ok { display: block; background: #14532d; color: #bbf7d0; }
+    .msg.err { display: block; background: #7f1d1d; color: #fecaca; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .8rem; }
+    .stat-box { background: #0f172a; border-radius: 8px; padding: .8rem; border: 1px solid #334155; }
+    .stat-box .v { font-size: 1.2rem; font-weight: 700; color: #38bdf8; }
+    .stat-box .l { font-size: .75rem; color: #94a3b8; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; margin-top: .8rem; }
+    th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid #334155; }
+    th { color: #94a3b8; font-weight: 500; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>⚙️ Admin</h1>
+  <nav>
+    <a href="/">Mapa</a>
+    <a href="/proyecciones">Proyecciones</a>
+    <a href="/admin" class="active">Admin</a>
+    <a href="/logout">Salir</a>
+  </nav>
+</header>
+<div class="content">
+
+  <div class="panel">
+    <h2>Estado actual</h2>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Cargar VOLUMEN.csv</h2>
+    <p>Archivo con columnas: Año;Mes;Petrolera;provincia;Sector;producto;Volumen (~24 MB).</p>
+    <input type="file" id="fileVolumen" accept=".csv">
+    <button id="btnVolumen" onclick="uploadVolumen()">Subir y procesar</button>
+    <div class="msg" id="msgVolumen"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Cargar Excel de Regresión</h2>
+    <p>Excel con Yt, X1–X4 y coeficientes (b1–b4, MAPE, R²).</p>
+    <input type="file" id="fileReg" accept=".xlsx,.xls">
+    <button id="btnReg" onclick="uploadRegresion()">Subir modelo</button>
+    <div class="msg" id="msgReg"></div>
+  </div>
+
+  {% if user.nivel >= 3 %}
+  <div class="panel">
+    <h2>Usuarios</h2>
+    <div id="usersList"></div>
+  </div>
+  {% endif %}
+
+</div>
+<script>
+async function loadStats() {
+  const r = await fetch('/api/admin/stats');
+  const d = await r.json();
+  let html = `
+    <div class="stat-box"><div class="v">${d.volumen_rows.toLocaleString()}</div><div class="l">Filas de volumen</div></div>
+    <div class="stat-box"><div class="v">${d.regresion_points}</div><div class="l">Puntos de regresión</div></div>
+  `;
+  if (d.coeficientes) {
+    html += `
+      <div class="stat-box"><div class="v">${d.coeficientes.r2 != null ? d.coeficientes.r2.toFixed(3) : '—'}</div><div class="l">R²</div></div>
+      <div class="stat-box"><div class="v">${d.coeficientes.mape != null ? (d.coeficientes.mape*100).toFixed(1)+'%' : '—'}</div><div class="l">MAPE</div></div>
+    `;
+  }
+  document.getElementById('stats').innerHTML = html;
+}
+
+async function uploadVolumen() {
+  const f = document.getElementById('fileVolumen').files[0];
+  if (!f) return alert('Elegí un archivo');
+  const btn = document.getElementById('btnVolumen');
+  const msg = document.getElementById('msgVolumen');
+  btn.disabled = true; btn.textContent = 'Procesando… (puede demorar)';
+  msg.className = 'msg';
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const r = await fetch('/api/admin/upload-volumen', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Error');
+    msg.className = 'msg ok';
+    msg.textContent = `OK — insertados: ${d.inserted}, actualizados: ${d.updated}, omitidos: ${d.skipped}`;
+    loadStats();
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Subir y procesar';
+  }
+}
+
+async function uploadRegresion() {
+  const f = document.getElementById('fileReg').files[0];
+  if (!f) return alert('Elegí un archivo');
+  const btn = document.getElementById('btnReg');
+  const msg = document.getElementById('msgReg');
+  btn.disabled = true; btn.textContent = 'Procesando…';
+  msg.className = 'msg';
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const r = await fetch('/api/admin/upload-regresion', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Error');
+    msg.className = 'msg ok';
+    msg.textContent = `OK — ${d.puntos} puntos cargados. Coeficientes: b1=${d.coeficientes.b1.toFixed(1)}, R²=${d.coeficientes.r2?.toFixed(3)}`;
+    loadStats();
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Subir modelo';
+  }
+}
+
+{% if user.nivel >= 3 %}
+async function loadUsers() {
+  const r = await fetch('/api/admin/users');
+  const users = await r.json();
+  let html = '<table><tr><th>Email</th><th>Nombre</th><th>Nivel</th><th>Activo</th></tr>';
+  users.forEach(u => {
+    html += `<tr><td>${u.email}</td><td>${u.nombre||''}</td><td>${u.nivel}</td><td>${u.is_active?'Sí':'No'}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('usersList').innerHTML = html;
+}
+loadUsers();
+{% endif %}
+
+loadStats();
+</script>
+</body>
+</html>

@@ -190,13 +190,14 @@ def _anios_estimables(reales):
     tope = max(ERROR_POR_HORIZONTE)
     out = []
     anio = max(a for a, _ in reales)
-    while True:
+    while len(out) < ANIOS_FUTUROS:
         anio += 1
         hs = [anio - max(por_mes[m]) for m in por_mes if any(y < anio for y in por_mes[m])]
         peor = max(hs) if hs else None
         if peor is None or peor > tope:
-            return out
+            break
         out.append({'anio': anio, 'error': ERROR_POR_HORIZONTE[peor], 'horizonte': peor})
+    return out
 
 
 @app.route('/api/filtros')
@@ -228,6 +229,11 @@ def api_filtros():
 # horizontes: el total pais no tiene tendencia medible (CAGR ~ 1.00), asi que
 # aplicar un factor solo suma ruido.
 ERROR_POR_HORIZONTE = {1: 17.8, 2: 23.1, 3: 28.9}
+
+# Se proyecta un solo anio hacia adelante. Mas alla el error crece rapido y el
+# metodo repite el mismo origen, con lo que los anios siguientes no aportan un
+# numero distinto.
+ANIOS_FUTUROS = 1
 
 
 def _resolver_periodos(anios, meses, reales):

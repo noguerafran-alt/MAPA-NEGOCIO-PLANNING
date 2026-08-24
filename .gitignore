@@ -14,3 +14,6 @@ local_dev.db
 
 # cache de descarga de rutas (regenerable con tools/fetch_rutas.py)
 tools/overpass_raw.json
+
+# cache de descarga de limites provinciales (regenerable con tools/fetch_provincias.py)
+tools/overpass_provincias_raw.json

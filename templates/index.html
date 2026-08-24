@@ -79,6 +79,14 @@
     .prov-detail.visible { display: block; }
     .bar { height: 8px; border-radius: 4px; background: #334155; margin-top: .3rem; overflow: hidden; }
     .bar-fill { height: 100%; background: #0ea5e9; border-radius: 4px; }
+    .prov-pct { color: #94a3b8; }
+    .prov-filtro { margin: .5rem 0 .1rem; }
+    .prov-filtro label { display: block; font-size: .7rem; color: #94a3b8; margin-bottom: .2rem; }
+    .prov-filtro select {
+      width: 100%; padding: .35rem; border: 1px solid #334155; border-radius: 6px;
+      background: #1e293b; color: #e2e8f0; font-size: .78rem; font-family: inherit; cursor: pointer;
+    }
+    .prov-filtro .nota { font-size: .66rem; color: #64748b; margin-top: .25rem; }
     .legend { display: flex; flex-direction: column; gap: .25rem; font-size: .75rem; }
     .legend-item { display: flex; align-items: center; gap: .4rem; }
     .legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
@@ -169,6 +177,7 @@
   <nav>
     <a href="/" class="active">Mapa</a>
     <a href="/proyecciones">Proyecciones</a>
+    <a href="/modelo">Modelo</a>
     {% if user.nivel >= 2 %}<a href="/admin">Admin</a>{% endif %}
     <a href="/logout">Salir ({{ user.nombre or user.email }})</a>
   </nav>
@@ -247,6 +256,11 @@
 
     <div class="panel prov-detail" id="provDetail">
       <h3 id="provName">—</h3>
+      <div class="prov-filtro">
+        <label for="selPetroleraProv">Petrolera</label>
+        <select id="selPetroleraProv"></select>
+        <div class="nota">También filtra el mapa y el panel de arriba.</div>
+      </div>
       <div id="provStats"></div>
     </div>
 
@@ -279,10 +293,19 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
 map.createPane('rutasPane');
 map.getPane('rutasPane').style.zIndex = 350;
 
+// El sombreado provincial va por debajo de las rutas para no taparlas.
+map.createPane('provPane');
+map.getPane('provPane').style.zIndex = 340;
+
 let markersLayer = L.layerGroup().addTo(map);
 let rutasLayer = null;
+let limitesProv = null;      // GeoJSON de limites, null hasta que cargue
+let resaltadoLayer = null;   // capa del sombreado de la provincia fijada
 let currentData = {};
 let datosA = {}, datosB = {}, respA = null, respB = null;
+let petroleras = [];
+// Provincia fijada en el recuadro de detalle, para poder repintarlo al refiltrar.
+let provFijada = null;
 
 const COLOR_SUBE = '#22c55e', COLOR_BAJA = '#ef4444', COLOR_IGUAL = '#64748b';
 
@@ -314,6 +337,45 @@ async function cargarRutas() {
     estado.style.color = '#f87171';
     document.getElementById('chkRutas').disabled = true;
   }
+}
+
+// CABA esta dentro del area metropolitana de Buenos Aires y se leen juntas:
+// tocar cualquiera de las dos sombrea el territorio de ambas. El detalle del
+// recuadro sigue siendo el de la provincia que se toco, que es la que tiene
+// los volumenes propios.
+const GRUPOS_PROV = [['Buenos Aires', 'CABA']];
+
+function grupoDe(prov) {
+  const g = GRUPOS_PROV.find(g => g.includes(prov));
+  return g || [prov];
+}
+
+async function cargarLimites() {
+  try {
+    const r = await fetch('/static/provincias.geojson');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    limitesProv = await r.json();
+    // Si habia una provincia fijada antes de que llegara el archivo, se pinta
+    // ahora en vez de quedar sin resaltado hasta el proximo clic.
+    if (provFijada) resaltarProvincia(provFijada);
+  } catch (e) {
+    // El mapa funciona sin los limites: se pierde el sombreado, nada mas.
+    console.warn('No se pudieron cargar los limites provinciales:', e.message);
+  }
+}
+
+function resaltarProvincia(prov) {
+  if (resaltadoLayer) { map.removeLayer(resaltadoLayer); resaltadoLayer = null; }
+  if (!limitesProv || !prov) return;
+  const grupo = grupoDe(prov);
+  const feats = limitesProv.features.filter(f => grupo.includes(f.properties.name));
+  if (!feats.length) return;
+  resaltadoLayer = L.geoJSON(
+    { type: 'FeatureCollection', features: feats },
+    { pane: 'provPane', interactive: false,
+      style: { color: '#cbd5e1', weight: 2, opacity: 0.9,
+               fillColor: '#94a3b8', fillOpacity: 0.18 } }
+  ).addTo(map);
 }
 
 document.getElementById('chkRutas').addEventListener('change', (ev) => {
@@ -385,7 +447,17 @@ function crearMultiSelect(contenedorId, items, nombre) {
   });
 
   actualizarResumen();
-  filtros[contenedorId] = { valores: () => marcados().map(i => i.value) };
+  filtros[contenedorId] = {
+    valores: () => marcados().map(i => i.value),
+    todos:   () => inputs().map(i => i.value),
+    // Sirve para que otro control (p. ej. el filtro del recuadro de provincia)
+    // deje este desplegable mostrando lo mismo que se aplico al mapa.
+    marcar(lista) {
+      const set = new Set(lista.map(String));
+      inputs().forEach(i => { i.checked = set.has(i.value); });
+      actualizarResumen();
+    }
+  };
   return filtros[contenedorId];
 }
 
@@ -408,6 +480,11 @@ async function initFiltros() {
     crearMultiSelect('msPetroleras' + suf, (d.petroleras || []).map(simple), 'petroleras');
     crearMultiSelect('msSectores' + suf,   (d.sectores || []).map(simple), 'sectores');
   });
+
+  petroleras = d.petroleras || [];
+  const sel = document.getElementById('selPetroleraProv');
+  sel.innerHTML = `<option value="">Todas (${petroleras.length})</option>` +
+    petroleras.map(p => `<option value="${escaparAttr(p)}">${p}</option>`).join('');
 }
 
 const comparando = () => !document.getElementById('sidebarB').hidden;
@@ -584,6 +661,7 @@ async function cargarMapa() {
     datosB = {};
   }
 
+  if (provFijada) showProv(provFijada, datosA[provFijada] || vacio());
   dibujarMapa();
 }
 
@@ -634,23 +712,39 @@ function tooltipProv(prov, d, dB) {
 }
 
 function showProv(name, d) {
+  provFijada = name;
+  resaltarProvincia(name);
   const el = document.getElementById('provDetail');
   el.classList.add('visible');
   document.getElementById('provName').textContent = name;
+  const total = d.total || 0;
+  // Las barras se escalan contra el producto mas grande; los porcentajes van
+  // sobre el total de la provincia, que es la lectura que se pidio.
   const max = Math.max(d.GO2, d.GO3, d.N2, d.N3, 1);
   document.getElementById('provStats').innerHTML = `
-    <div class="stat">${formatNum(d.total)}</div>
+    <div class="stat">${formatNum(total)}</div>
     <div class="stat-label">Total m³</div>
-    ${['GO2','GO3','N2','N3'].map(p => `
+    ${PRODUCTOS.map(p => `
       <div style="margin-top:.5rem">
         <div style="display:flex;justify-content:space-between;font-size:.8rem">
-          <span>${p}</span><span>${formatNum(d[p])}</span>
+          <span>${p}</span>
+          <span>${formatNum(d[p] || 0)}
+            <span class="prov-pct">${total > 0 ? ((d[p] || 0) / total * 100).toFixed(1) : '0.0'}%</span>
+          </span>
         </div>
-        <div class="bar"><div class="bar-fill" style="width:${(d[p]/max*100).toFixed(0)}%"></div></div>
+        <div class="bar"><div class="bar-fill" style="width:${((d[p] || 0)/max*100).toFixed(0)}%"></div></div>
       </div>
     `).join('')}
   `;
 }
+
+// El filtro del recuadro escribe sobre el multi-select de petroleras del panel
+// derecho, asi que el mapa y el total filtrado quedan con la misma seleccion.
+document.getElementById('selPetroleraProv').addEventListener('change', (ev) => {
+  const v = ev.target.value;
+  filtros['msPetroleras'].marcar(v ? [v] : filtros['msPetroleras'].todos());
+  cargarMapa();
+});
 
 function alternarComparacion(mostrar) {
   const panel = document.getElementById('sidebarB');
@@ -674,6 +768,7 @@ document.getElementById('chkFiltrarMapaB').addEventListener('change', (ev) => {
 });
 
 cargarRutas();
+cargarLimites();
 initFiltros().then(cargarMapa);
 </script>
 </body>

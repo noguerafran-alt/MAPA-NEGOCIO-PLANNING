@@ -311,7 +311,8 @@ async function initFiltros() {
   // Los anios futuros se ofrecen pero arrancan desmarcados: el mapa muestra
   // datos reales salvo que se pidan estimaciones explicitamente.
   const anios = (d.anios || []).map(simple).concat(
-    (d.anios_futuros || []).map(a => ({ valor: a, etiqueta: a + ' (est.)', marcado: false })));
+    (d.anios_futuros || []).map(f => ({
+      valor: f.anio, etiqueta: `${f.anio} (est. ±${f.error.toFixed(0)}%)`, marcado: false })));
   crearMultiSelect('msAnios', anios, 'años');
   crearMultiSelect('msMeses',      (d.meses || []).map(m => ({ valor: m, etiqueta: MESES_NOMBRE[m-1] || m })), 'meses');
   crearMultiSelect('msProductos',  (d.productos || []).map(simple), 'productos');
@@ -367,11 +368,22 @@ async function cargarMapa() {
   const sumEst = Object.values(currentData).reduce((a, d) => a + (d.estimado || 0), 0);
   if (estimados.length) {
     const meses = estimados.map(e => e.pedido[0] + '-' + String(e.pedido[1]).padStart(2, '0'));
+    // El metodo repite el ultimo anio con dato, asi que todos los anios
+    // futuros dan el mismo numero. Decirlo evita leerlo como una proyeccion
+    // que evoluciona anio a anio.
+    const h = resp.horizonte_max;
+    const tabla = resp.error_horizonte || {};
+    const topeH = Math.max(...Object.keys(tabla).map(Number));
+    const err = tabla[h] != null ? tabla[h] : tabla[topeH];
+    const alMenos = tabla[h] == null;
     avisoEst.style.display = 'block';
     avisoEst.innerHTML = `<b>${formatNum(sumEst)} m³ estimados</b> (${(sumEst / (sumTotal || 1) * 100).toFixed(0)}%
-      del total). ${estimados.length} mes(es) sin dato real: ${meses.slice(0, 6).join(', ')}${
-      meses.length > 6 ? ' y ' + (meses.length - 6) + ' mas' : ''}.
-      Se estiman con el mismo mes del último año con dato.`;
+      del total)${err ? `, error típico <b>±${alMenos ? 'más de ' : ''}${err.toFixed(0)}%</b>` : ''}.
+      ${estimados.length} mes(es) sin dato real: ${meses.slice(0, 4).join(', ')}${
+      meses.length > 4 ? ' y ' + (meses.length - 4) + ' más' : ''}.
+      <br>Se repite el mismo mes del último año con dato, así que
+      <b>todos los años futuros dan el mismo valor</b>: el total país no muestra
+      tendencia medible y aplicarle un factor de crecimiento dio peor en backtest.`;
   } else {
     avisoEst.style.display = 'none';
   }

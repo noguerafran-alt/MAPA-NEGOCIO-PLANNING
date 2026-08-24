@@ -173,6 +173,32 @@ def _enteros(valores):
     return out
 
 
+def _anios_estimables(reales):
+    """Anios futuros que se pueden estimar con un horizonte ya medido.
+
+    El horizonte de cada mes es la distancia al ultimo anio que tiene ese mes,
+    y no es igual para todos: si los datos llegan a junio, en el anio siguiente
+    los meses de enero a junio estan a 1 anio y los de julio a diciembre a 2.
+    Se ofrece un anio solo mientras su peor horizonte siga dentro de la tabla
+    de errores medidos; mas alla no habria con que acompanar el numero.
+    """
+    if not reales:
+        return []
+    por_mes = {}
+    for a, m in reales:
+        por_mes.setdefault(m, []).append(a)
+    tope = max(ERROR_POR_HORIZONTE)
+    out = []
+    anio = max(a for a, _ in reales)
+    while True:
+        anio += 1
+        hs = [anio - max(por_mes[m]) for m in por_mes if any(y < anio for y in por_mes[m])]
+        peor = max(hs) if hs else None
+        if peor is None or peor > tope:
+            return out
+        out.append({'anio': anio, 'error': ERROR_POR_HORIZONTE[peor], 'horizonte': peor})
+
+
 @app.route('/api/filtros')
 @login_required(1)
 def api_filtros():
@@ -181,9 +207,9 @@ def api_filtros():
     petroleras = db.session.query(VolumeMonthly.petrolera).distinct().order_by(VolumeMonthly.petrolera).all()
     sectores = db.session.query(VolumeMonthly.sector).distinct().order_by(VolumeMonthly.sector).all()
     lista_anios = [a[0] for a in anios]
-    # Anios sin dato que igual se pueden estimar a partir del mismo mes de un
-    # anio anterior. Se ofrecen 3 para planning; mas alla el error crece.
-    futuros = [lista_anios[-1] + k for k in (1, 2, 3)] if lista_anios else []
+    reales_periodos = {(a, m) for a, m in
+                       db.session.query(VolumeMonthly.anio, VolumeMonthly.mes).distinct()}
+    futuros = _anios_estimables(reales_periodos)
     return jsonify({
         'anios': lista_anios,
         'anios_futuros': futuros,
@@ -193,6 +219,15 @@ def api_filtros():
         'productos': ['GO2', 'GO3', 'N2', 'N3'],
         'provincias': CANONICAL_PROVINCES,
     })
+
+
+# WAPE medido en backtest sobre 2023, 2024 y 2025 al grano del mapa, segun
+# cuantos anios separan el mes estimado del ultimo anio con dato real.
+# Se probaron factores de crecimiento (global, por producto y por serie, con
+# CAGR de 3/5/8 anios, amortiguados y no) y todos dieron peor en los tres
+# horizontes: el total pais no tiene tendencia medible (CAGR ~ 1.00), asi que
+# aplicar un factor solo suma ruido.
+ERROR_POR_HORIZONTE = {1: 17.8, 2: 23.1, 3: 28.9}
 
 
 def _resolver_periodos(anios, meses, reales):
@@ -297,6 +332,9 @@ def api_volumenes():
     return jsonify({
         'provincias': result,
         'estimados': [{'pedido': list(ped), 'origen': list(ori)} for ori, ped in estimados],
+        'error_horizonte': ERROR_POR_HORIZONTE,
+        'horizonte_max': (max(ped[0] - ori[0] for ori, ped in estimados)
+                          if estimados else None),
     })
 
 

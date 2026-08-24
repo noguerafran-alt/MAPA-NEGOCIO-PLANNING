@@ -14,7 +14,7 @@ import click
 
 from models import (db, VolumeMonthly, VolumeUploadLog, RegressionPoint,
                     RegressionConfig, Province, User)
-from parser_volumen import parse_csv, CANONICAL_PROVINCES
+from parser_volumen import parse_archivo, CANONICAL_PROVINCES
 from parser_regresion import parse_regresion_excel
 from provinces_data import PROVINCE_CENTROIDS, REGION
 
@@ -412,9 +412,13 @@ def api_upload_volumen():
     if not f.filename:
         return jsonify({'error': 'Nombre de archivo vacío'}), 400
     try:
-        rows, skipped = parse_csv(f)
+        rows, skipped, info = parse_archivo(f, f.filename)
     except Exception as e:
-        return jsonify({'error': f'Error parseando CSV: {e}'}), 400
+        return jsonify({'error': f'Error leyendo la planilla: {e}'}), 400
+    if not rows:
+        return jsonify({'error': 'La planilla no tiene filas validas. Se esperan las '
+                                 'columnas A a G (Anio, Mes, Petrolera, provincia, '
+                                 'Sector, producto, Volumen) desde la fila 2.'}), 400
 
     key_cols = ('anio', 'mes', 'petrolera', 'provincia', 'sector', 'producto')
 
@@ -451,7 +455,8 @@ def api_upload_volumen():
     )
     db.session.add(log)
     db.session.commit()
-    return jsonify({'ok': True, 'inserted': inserted, 'updated': updated, 'skipped': skipped, 'total': len(rows)})
+    return jsonify({'ok': True, 'inserted': inserted, 'updated': updated,
+                    'skipped': skipped, 'total': len(rows), 'resumen': info})
 
 
 @app.route('/api/admin/upload-regresion', methods=['POST'])

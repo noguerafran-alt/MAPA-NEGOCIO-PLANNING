@@ -1,15 +1,31 @@
-"""Parser de VOLUMEN.csv (separador ;).
+"""Parser de la planilla de VOLUMEN, en Excel o CSV.
 
-Formato esperado:
-    Año;Mes;Petrolera;provincia;Sector;producto;Volumen
+Las columnas se leen SIEMPRE por posición, sin mirar los encabezados:
 
-Volumen puede venir con puntos como separador de miles (ej. 10.216.123)
-o con notación científica errónea / valores gigantes → se normalizan.
+    A=Año  B=Mes  C=Petrolera  D=provincia  E=Sector  F=producto  G=Volumen
+
+Los encabezados suelen venir con la codificación rota (ej. "AÃ±o" en vez de
+"Año") cuando la planilla pasó por Excel con la configuración regional
+equivocada, así que matchear por nombre no es confiable. La primera fila se
+saltea salvo que su columna A ya contenga un año válido, para no perder una
+fila de datos si la planilla viene sin encabezado.
+
+Volumen admite coma o punto decimal y separadores de miles.
 """
 
 import csv
+import io
 import re
 from collections import defaultdict
+
+from openpyxl import load_workbook
+
+# Posición de cada campo: la planilla siempre trae estas columnas en este orden.
+COL_ANIO, COL_MES, COL_PETROLERA, COL_PROVINCIA, COL_SECTOR, COL_PRODUCTO, COL_VOLUMEN = range(7)
+COLUMNAS_MINIMAS = 7
+
+PRODUCTOS_VALIDOS = ('GO2', 'GO3', 'N2', 'N3')
+ANIO_MIN, ANIO_MAX = 1990, 2100
 
 
 # Normalización de nombres de provincia
@@ -88,7 +104,95 @@ def parse_volumen(raw: str) -> float:
     return val
 
 
+def reparar_texto(valor):
+    """Repara texto UTF-8 leído como latin-1 ("Al PÃºblico" -> "Al Público").
+
+    Pasa cada vez que la planilla se abre en Excel con la configuración
+    regional equivocada. Sin esto quedarían dos sectores distintos para el
+    mismo nombre. Solo se aplica si el texto tiene la firma del problema y la
+    reconversión no falla.
+    """
+    if not isinstance(valor, str) or ('Ã' not in valor and 'Â' not in valor):
+        return valor
+    try:
+        return valor.encode('latin-1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return valor
+
+
+def _fila(valores):
+    """Convierte una fila posicional en el dict que espera la base.
+
+    Devuelve None si la fila no sirve: encabezado, mes fuera de rango,
+    producto desconocido o año ilegible.
+    """
+    if len(valores) < COLUMNAS_MINIMAS:
+        return None
+    try:
+        anio = int(float(str(valores[COL_ANIO]).strip()))
+        mes = int(float(str(valores[COL_MES]).strip()))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not (ANIO_MIN <= anio <= ANIO_MAX) or not (1 <= mes <= 12):
+        return None
+    producto = str(valores[COL_PRODUCTO] or '').strip().upper()
+    if producto not in PRODUCTOS_VALIDOS:
+        return None
+    return {
+        'anio': anio,
+        'mes': mes,
+        'petrolera': reparar_texto(str(valores[COL_PETROLERA] or '').strip()),
+        'provincia': normalize_province(reparar_texto(str(valores[COL_PROVINCIA] or ''))),
+        'sector': reparar_texto(str(valores[COL_SECTOR] or '').strip()) or 'S/N',
+        'producto': producto,
+        'volumen': parse_volumen(valores[COL_VOLUMEN]),
+    }
+
+
+def _procesar(filas):
+    """Recorre filas posicionales, salteando el encabezado si lo hay."""
+    rows, skipped = [], 0
+    for i, valores in enumerate(filas):
+        fila = _fila(list(valores))
+        if fila is None:
+            if i > 0:          # la fila 1 suele ser el encabezado
+                skipped += 1
+            continue
+        rows.append(fila)
+    if rows:
+        anios = [r['anio'] for r in rows]
+        a0, a1 = min(anios), max(anios)
+        periodo = '%d-%02d a %d-%02d' % (
+            a0, min(r['mes'] for r in rows if r['anio'] == a0),
+            a1, max(r['mes'] for r in rows if r['anio'] == a1))
+    else:
+        periodo = '—'
+    info = {
+        'volumen_max': max((r['volumen'] for r in rows), default=0.0),
+        'volumen_total': sum(r['volumen'] for r in rows),
+        'sectores': sorted({r['sector'] for r in rows}),
+        'petroleras': sorted({r['petrolera'] for r in rows}),
+        'periodo': periodo,
+    }
+    return rows, skipped, info
+
+
+def parse_excel(file_obj):
+    """Lee la primera hoja de un .xlsx/.xlsm por posición de columna."""
+    datos = file_obj.read()
+    if not isinstance(datos, bytes):
+        datos = datos.encode('utf-8')
+    wb = load_workbook(io.BytesIO(datos), read_only=True, data_only=True)
+    try:
+        ws = wb.worksheets[0]
+        return _procesar(ws.iter_rows(min_col=1, max_col=COLUMNAS_MINIMAS,
+                                      values_only=True))
+    finally:
+        wb.close()
+
+
 def parse_csv(file_obj, encoding='utf-8'):
+    """Lee un CSV separado por ; por posición de columna."""
     content = file_obj.read()
     if isinstance(content, bytes):
         for enc in (encoding, 'utf-8-sig', 'latin-1', 'cp1252'):
@@ -103,51 +207,16 @@ def parse_csv(file_obj, encoding='utf-8'):
         text = content
     if text.startswith('\ufeff'):
         text = text[1:]
-    reader = csv.DictReader(text.splitlines(), delimiter=';')
-    field_map = {}
-    for f in (reader.fieldnames or []):
-        fl = f.strip().lower()
-        if fl in ('año', 'anio', 'year'):
-            field_map['anio'] = f
-        elif fl in ('mes', 'month'):
-            field_map['mes'] = f
-        elif fl in ('petrolera',):
-            field_map['petrolera'] = f
-        elif fl in ('provincia',):
-            field_map['provincia'] = f
-        elif fl in ('sector',):
-            field_map['sector'] = f
-        elif fl in ('producto',):
-            field_map['producto'] = f
-        elif fl in ('volumen', 'volume'):
-            field_map['volumen'] = f
-    required = {'anio', 'mes', 'petrolera', 'provincia', 'sector', 'producto', 'volumen'}
-    if not required.issubset(field_map.keys()):
-        missing = required - set(field_map.keys())
-        raise ValueError(f"Columnas faltantes en el CSV: {missing}. Columnas encontradas: {reader.fieldnames}")
-    rows = []
-    skipped = 0
-    for row in reader:
-        try:
-            anio = int(float(str(row[field_map['anio']]).strip()))
-            mes = int(float(str(row[field_map['mes']]).strip()))
-            if not (1 <= mes <= 12):
-                skipped += 1
-                continue
-            petrolera = str(row[field_map['petrolera']]).strip()
-            provincia = normalize_province(str(row[field_map['provincia']]))
-            sector = str(row[field_map['sector']]).strip() or 'S/N'
-            producto = str(row[field_map['producto']]).strip().upper()
-            if producto not in ('GO2', 'GO3', 'N2', 'N3'):
-                skipped += 1
-                continue
-            volumen = parse_volumen(row[field_map['volumen']])
-            rows.append({
-                'anio': anio, 'mes': mes, 'petrolera': petrolera,
-                'provincia': provincia, 'sector': sector,
-                'producto': producto, 'volumen': volumen,
-            })
-        except (ValueError, TypeError, KeyError):
-            skipped += 1
-            continue
-    return rows, skipped
+    return _procesar(csv.reader(text.splitlines(), delimiter=';'))
+
+
+def parse_archivo(file_obj, filename=''):
+    """Elige el lector segun la extension del archivo subido."""
+    nombre = (filename or '').lower()
+    if nombre.endswith(('.xlsx', '.xlsm', '.xltx')):
+        return parse_excel(file_obj)
+    if nombre.endswith('.xls'):
+        raise ValueError(
+            'El formato .xls antiguo no se puede leer. Guardá la planilla '
+            'como .xlsx desde Excel y volvé a subirla.')
+    return parse_csv(file_obj)

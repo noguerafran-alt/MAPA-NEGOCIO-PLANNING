@@ -57,9 +57,11 @@
   </div>
 
   <div class="panel">
-    <h2>Cargar VOLUMEN.csv</h2>
-    <p>Archivo con columnas: Año;Mes;Petrolera;provincia;Sector;producto;Volumen (~24 MB).</p>
-    <input type="file" id="fileVolumen" accept=".csv">
+    <h2>Cargar planilla de VOLUMEN</h2>
+    <p>Excel (.xlsx) o CSV. Las columnas se leen <b>por posición</b>, sin mirar los
+       encabezados: <b>A</b>=Año, <b>B</b>=Mes, <b>C</b>=Petrolera, <b>D</b>=provincia,
+       <b>E</b>=Sector, <b>F</b>=producto, <b>G</b>=Volumen. Los datos arrancan en la fila 2.</p>
+    <input type="file" id="fileVolumen" accept=".xlsx,.xlsm,.csv">
     <button id="btnVolumen" onclick="uploadVolumen()">Subir y procesar</button>
     <div class="msg" id="msgVolumen"></div>
   </div>
@@ -110,7 +112,17 @@ async function uploadVolumen() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Error');
     msg.className = 'msg ok';
-    msg.textContent = `OK — insertados: ${d.inserted}, actualizados: ${d.updated}, omitidos: ${d.skipped}`;
+    // Se muestra que se leyo para poder detectar de un vistazo un archivo con
+    // los valores mal escalados o con sectores nuevos por codificacion rota.
+    const R = d.resumen || {};
+    const n = v => (v == null ? '—' : v.toLocaleString('es-AR', { maximumFractionDigits: 1 }));
+    msg.innerHTML = `OK — insertados: ${d.inserted}, actualizados: ${d.updated}, omitidos: ${d.skipped}
+      <div style="margin-top:.5rem;font-size:.8rem;opacity:.9">
+        Período leído: <b>${R.periodo || '—'}</b><br>
+        Volumen total: <b>${n(R.volumen_total)}</b> m³ &nbsp;·&nbsp;
+        máximo de una fila: <b>${n(R.volumen_max)}</b> m³<br>
+        Sectores (${(R.sectores || []).length}): ${(R.sectores || []).join(', ') || '—'}
+      </div>`;
     loadStats();
   } catch (e) {
     msg.className = 'msg err';

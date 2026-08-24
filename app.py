@@ -247,21 +247,35 @@ def api_upload_volumen():
     except Exception as e:
         return jsonify({'error': f'Error parseando CSV: {e}'}), 400
 
-    inserted = updated = 0
+    key_cols = ('anio', 'mes', 'petrolera', 'provincia', 'sector', 'producto')
+
+    existing_ids = {}
+    for row in db.session.query(
+        VolumeMonthly.id, VolumeMonthly.anio, VolumeMonthly.mes, VolumeMonthly.petrolera,
+        VolumeMonthly.provincia, VolumeMonthly.sector, VolumeMonthly.producto
+    ):
+        existing_ids[tuple(row[1:])] = row[0]
+
+    # Si el CSV repite una clave, gana la última aparición (igual que el upsert fila a fila).
+    pending = {}
     for r in rows:
-        existing = VolumeMonthly.query.filter_by(
-            anio=r['anio'], mes=r['mes'], petrolera=r['petrolera'],
-            provincia=r['provincia'], sector=r['sector'], producto=r['producto']
-        ).first()
-        if existing:
-            existing.volumen = r['volumen']
-            updated += 1
+        pending[tuple(r[c] for c in key_cols)] = r
+
+    to_insert = []
+    to_update = []
+    for key, r in pending.items():
+        rid = existing_ids.get(key)
+        if rid is not None:
+            to_update.append({'id': rid, 'volumen': r['volumen']})
         else:
-            db.session.add(VolumeMonthly(**r))
-            inserted += 1
-        if (inserted + updated) % 5000 == 0:
-            db.session.commit()
+            to_insert.append(r)
+
+    if to_insert:
+        db.session.bulk_insert_mappings(VolumeMonthly, to_insert)
+    if to_update:
+        db.session.bulk_update_mappings(VolumeMonthly, to_update)
     db.session.commit()
+    inserted, updated = len(to_insert), len(to_update)
     log = VolumeUploadLog(
         filename=f.filename, rows_inserted=inserted, rows_updated=updated,
         rows_skipped=skipped, note=f'Total filas procesadas: {len(rows)}'

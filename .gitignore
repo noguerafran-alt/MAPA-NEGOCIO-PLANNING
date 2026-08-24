@@ -11,3 +11,6 @@ local_dev.db
 .DS_Store
 .vscode/
 .idea/
+
+# cache de descarga de rutas (regenerable con tools/fetch_rutas.py)
+tools/overpass_raw.json

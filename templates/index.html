@@ -46,6 +46,31 @@
     .legend { display: flex; flex-direction: column; gap: .25rem; font-size: .75rem; }
     .legend-item { display: flex; align-items: center; gap: .4rem; }
     .legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+
+    /* Tooltip de provincia con desglose por producto */
+    .leaflet-tooltip.prov-tip {
+      background: #0f172a; border: 1px solid #475569; color: #e2e8f0;
+      border-radius: 6px; padding: .5rem .6rem; box-shadow: 0 4px 14px rgba(0,0,0,.5);
+      font-family: inherit;
+    }
+    .leaflet-tooltip.prov-tip:before { border-top-color: #475569; }
+    .tip-title { font-weight: 700; font-size: .85rem; margin-bottom: .1rem; }
+    .tip-total { font-size: .75rem; color: #94a3b8; margin-bottom: .4rem; }
+    .tip-row { display: grid; grid-template-columns: 2.4rem 1fr 3.4rem 2.6rem; gap: .4rem;
+               align-items: center; font-size: .75rem; line-height: 1.6; }
+    .tip-name { color: #cbd5e1; }
+    .tip-val { text-align: right; }
+    .tip-pct { text-align: right; color: #94a3b8; }
+    .tip-bar { height: 6px; border-radius: 3px; background: #1e293b; overflow: hidden; }
+    .tip-bar-fill { height: 100%; border-radius: 3px; }
+    .tip-hint { margin-top: .45rem; font-size: .68rem; color: #64748b; }
+    .tip-empty { font-size: .75rem; color: #94a3b8; }
+    .leaflet-tooltip.ruta-tip {
+      background: #1c1917; border: 1px solid #b45309; color: #fbbf24;
+      font-size: .72rem; font-weight: 600; padding: .15rem .4rem; border-radius: 4px;
+      box-shadow: none;
+    }
+    .leaflet-tooltip.ruta-tip:before { display: none; }
   </style>
 </head>
 <body>
@@ -94,8 +119,20 @@
     </div>
 
     <div class="panel">
+      <h3>Capas</h3>
+      <label style="display:flex;align-items:center;gap:.4rem;color:#cbd5e1;font-size:.8rem;cursor:pointer">
+        <input type="checkbox" id="chkRutas" checked> Rutas nacionales
+      </label>
+      <div id="rutasEstado" style="font-size:.7rem;color:#64748b;margin-top:.35rem">cargando…</div>
+    </div>
+
+    <div class="panel">
       <h3>Leyenda (intensidad)</h3>
       <div class="legend" id="legend"></div>
+      <div class="legend-item" style="margin-top:.5rem;padding-top:.5rem;border-top:1px solid #334155">
+        <div style="width:14px;height:3px;background:#b45309;border-radius:2px"></div>
+        Ruta nacional
+      </div>
     </div>
   </div>
 </div>
@@ -106,10 +143,48 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; OSM &copy; CARTO', maxZoom: 18
 }).addTo(map);
 
+// Pane propio para las rutas, por debajo de los circulos de volumen (overlayPane = 400)
+map.createPane('rutasPane');
+map.getPane('rutasPane').style.zIndex = 350;
+
 let markersLayer = L.layerGroup().addTo(map);
+let rutasLayer = null;
 let currentData = {};
 
 const COLORS = ['#0c4a6e','#0369a1','#0ea5e9','#38bdf8','#7dd3fc','#e0f2fe'];
+const PRODUCTOS = ['GO2','GO3','N2','N3'];
+const PROD_COLOR = { GO2: '#f59e0b', GO3: '#fb923c', N2: '#38bdf8', N3: '#a78bfa' };
+
+async function cargarRutas() {
+  const estado = document.getElementById('rutasEstado');
+  try {
+    const r = await fetch('/static/rutas_nacionales.geojson');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const gj = await r.json();
+    rutasLayer = L.geoJSON(gj, {
+      pane: 'rutasPane',
+      style: { color: '#b45309', weight: 1.2, opacity: 0.75 },
+      onEachFeature: (f, layer) => {
+        const ref = f.properties && f.properties.ref;
+        if (ref) layer.bindTooltip(ref, { sticky: true, className: 'ruta-tip' });
+        layer.on('mouseover', () => layer.setStyle({ color: '#fbbf24', weight: 2.5, opacity: 1 }));
+        layer.on('mouseout',  () => layer.setStyle({ color: '#b45309', weight: 1.2, opacity: 0.75 }));
+      }
+    });
+    if (document.getElementById('chkRutas').checked) rutasLayer.addTo(map);
+    estado.textContent = gj.features.length + ' rutas — fuente OpenStreetMap (ODbL)';
+  } catch (e) {
+    // El mapa sigue siendo util sin las rutas: se avisa en vez de fallar en silencio.
+    estado.textContent = 'No se pudieron cargar las rutas (' + e.message + ')';
+    estado.style.color = '#f87171';
+    document.getElementById('chkRutas').disabled = true;
+  }
+}
+
+document.getElementById('chkRutas').addEventListener('change', (ev) => {
+  if (!rutasLayer) return;
+  if (ev.target.checked) rutasLayer.addTo(map); else map.removeLayer(rutasLayer);
+});
 
 function formatNum(n) {
   if (n >= 1e6) return (n/1e6).toFixed(1) + ' M';
@@ -177,10 +252,37 @@ async function cargarMapa() {
     const circle = L.circleMarker([d.lat, d.lon], {
       radius, fillColor: COLORS[colorIdx], color: '#fff', weight: 1,
       fillOpacity: 0.85
-    }).bindTooltip(`<b>${prov}</b><br>${formatNum(d.total)} m³`, { direction: 'top' });
+    }).bindTooltip(tooltipProv(prov, d), {
+      direction: 'top', className: 'prov-tip', opacity: 1, offset: [0, -4]
+    });
     circle.on('click', () => showProv(prov, d));
     markersLayer.addLayer(circle);
   });
+}
+
+function tooltipProv(prov, d) {
+  const total = d.total || 0;
+  // El maximo por producto escala las barras; con total 0 no hay nada que desglosar.
+  const max = Math.max(...PRODUCTOS.map(p => d[p] || 0));
+  if (total <= 0 || max <= 0) {
+    return `<div class="tip-title">${prov}</div>
+            <div class="tip-empty">Sin volumen para estos filtros</div>`;
+  }
+  const filas = PRODUCTOS.map(p => {
+    const v = d[p] || 0;
+    const pct = (v / total * 100);
+    return `<div class="tip-row">
+      <span class="tip-name">${p}</span>
+      <span class="tip-bar"><span class="tip-bar-fill"
+        style="width:${(v / max * 100).toFixed(1)}%;background:${PROD_COLOR[p]}"></span></span>
+      <span class="tip-val">${formatNum(v)}</span>
+      <span class="tip-pct">${pct.toFixed(1)}%</span>
+    </div>`;
+  }).join('');
+  return `<div class="tip-title">${prov}</div>
+          <div class="tip-total">Total ${formatNum(total)} m³</div>
+          ${filas}
+          <div class="tip-hint">Clic para fijar el detalle</div>`;
 }
 
 function showProv(name, d) {
@@ -202,6 +304,7 @@ function showProv(name, d) {
   `;
 }
 
+cargarRutas();
 initFiltros().then(cargarMapa);
 </script>
 </body>

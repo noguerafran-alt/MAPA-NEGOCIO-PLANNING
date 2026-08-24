@@ -403,6 +403,67 @@ def api_proyeccion():
     })
 
 
+def _detectar_escala(rows, key_cols, existing_vol):
+    """Avisa si los volumenes que llegan estan fuera de escala.
+
+    El caso conocido: la planilla trae el volumen con coma decimal
+    (10216,123 = diez mil doscientos dieciseis) y Excel la interpreta como
+    separador de miles, con lo que el valor entra mil veces mas grande. Nada
+    en el archivo permite distinguirlo, asi que se compara contra lo cargado.
+
+    Devuelve None si no hay nada raro, o un dict con el detalle.
+    """
+    if not rows or not existing_vol:
+        return None
+
+    # 1) filas cuya clave ya existe: se compara el valor nuevo con el viejo
+    ratios = []
+    for r in rows:
+        if r['volumen'] <= 0:
+            continue
+        viejo = existing_vol.get(tuple(r[c] for c in key_cols))
+        if viejo and viejo > 0:
+            ratios.append(r['volumen'] / viejo)
+    if len(ratios) >= 20:
+        ratios.sort()
+        mediana = ratios[len(ratios) // 2]
+        if mediana >= 100:
+            return {
+                'motivo': 'ratio', 'mediana': mediana, 'comparadas': len(ratios),
+                'mensaje': (
+                    'Los volumenes vienen %.0f veces mas grandes que los ya cargados '
+                    '(mediana sobre %d filas que coinciden). Suele pasar cuando la '
+                    'planilla se abrio en Excel y la coma decimal se leyo como '
+                    'separador de miles: 10216,123 queda como 10216123. Revisa el '
+                    'archivo, o subilo igual si el cambio de escala es real.'
+                    % (mediana, len(ratios))),
+            }
+        if mediana <= 0.01:
+            return {
+                'motivo': 'ratio', 'mediana': mediana, 'comparadas': len(ratios),
+                'mensaje': (
+                    'Los volumenes vienen %.0f veces mas chicos que los ya cargados '
+                    '(mediana sobre %d filas que coinciden). Revisa el archivo, o '
+                    'subilo igual si el cambio es real.'
+                    % (1 / mediana, len(ratios))),
+            }
+        return None
+
+    # 2) sin filas en comun (un mes nuevo): se compara contra el maximo historico
+    max_nuevo = max(r['volumen'] for r in rows)
+    max_viejo = max(existing_vol.values())
+    if max_viejo > 0 and max_nuevo > 50 * max_viejo:
+        return {
+            'motivo': 'maximo', 'max_nuevo': max_nuevo, 'max_viejo': max_viejo,
+            'mensaje': (
+                'La fila mas grande de la planilla es %.0f, contra un maximo '
+                'historico de %.0f. Suele pasar cuando la coma decimal se leyo '
+                'como separador de miles. Revisa el archivo, o subilo igual si '
+                'el salto es real.' % (max_nuevo, max_viejo)),
+        }
+    return None
+
+
 @app.route('/api/admin/upload-volumen', methods=['POST'])
 @login_required(2)
 def api_upload_volumen():
@@ -422,12 +483,21 @@ def api_upload_volumen():
 
     key_cols = ('anio', 'mes', 'petrolera', 'provincia', 'sector', 'producto')
 
-    existing_ids = {}
+    # Se trae tambien el volumen: sirve para el upsert y para comparar escalas
+    # sin pagar una segunda pasada por la tabla.
+    existing_ids, existing_vol = {}, {}
     for row in db.session.query(
         VolumeMonthly.id, VolumeMonthly.anio, VolumeMonthly.mes, VolumeMonthly.petrolera,
-        VolumeMonthly.provincia, VolumeMonthly.sector, VolumeMonthly.producto
+        VolumeMonthly.provincia, VolumeMonthly.sector, VolumeMonthly.producto,
+        VolumeMonthly.volumen
     ):
-        existing_ids[tuple(row[1:])] = row[0]
+        clave = tuple(row[1:7])
+        existing_ids[clave] = row[0]
+        existing_vol[clave] = row[7]
+
+    escala = _detectar_escala(rows, key_cols, existing_vol)
+    if escala and request.args.get('forzar') != '1':
+        return jsonify({'error': escala['mensaje'], 'escala': escala}), 409
 
     # Si el CSV repite una clave, gana la última aparición (igual que el upsert fila a fila).
     pending = {}

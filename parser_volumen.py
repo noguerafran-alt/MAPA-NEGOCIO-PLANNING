@@ -27,6 +27,11 @@ COLUMNAS_MINIMAS = 7
 PRODUCTOS_VALIDOS = ('GO2', 'GO3', 'N2', 'N3')
 ANIO_MIN, ANIO_MAX = 1990, 2100
 
+# Por encima de esto el valor no puede ser un volumen mensual real: el maximo
+# historico de una fila esta en el orden de 1e5. Se descarta, pero contandolo,
+# porque un cero silencioso es imposible de notar despues.
+VOLUMEN_MAX_PLAUSIBLE = 50_000_000
+
 
 # Normalización de nombres de provincia
 PROVINCE_ALIASES = {
@@ -96,12 +101,9 @@ def parse_volumen(raw: str) -> float:
             s = ''.join(parts)
     s = s.replace(',', '.')
     try:
-        val = float(s)
+        return float(s)
     except ValueError:
         return 0.0
-    if abs(val) > 50_000_000:
-        return 0.0
-    return val
 
 
 def reparar_texto(valor):
@@ -138,6 +140,8 @@ def _fila(valores):
     producto = str(valores[COL_PRODUCTO] or '').strip().upper()
     if producto not in PRODUCTOS_VALIDOS:
         return None
+    volumen = parse_volumen(valores[COL_VOLUMEN])
+    fuera_de_rango = abs(volumen) > VOLUMEN_MAX_PLAUSIBLE
     return {
         'anio': anio,
         'mes': mes,
@@ -145,7 +149,8 @@ def _fila(valores):
         'provincia': normalize_province(reparar_texto(str(valores[COL_PROVINCIA] or ''))),
         'sector': reparar_texto(str(valores[COL_SECTOR] or '').strip()) or 'S/N',
         'producto': producto,
-        'volumen': parse_volumen(valores[COL_VOLUMEN]),
+        'volumen': 0.0 if fuera_de_rango else volumen,
+        '_fuera_de_rango': fuera_de_rango,
     }
 
 
@@ -167,7 +172,9 @@ def _procesar(filas):
             a1, max(r['mes'] for r in rows if r['anio'] == a1))
     else:
         periodo = '—'
+    fuera = sum(1 for r in rows if r.pop('_fuera_de_rango', False))
     info = {
+        'fuera_de_rango': fuera,
         'volumen_max': max((r['volumen'] for r in rows), default=0.0),
         'volumen_total': sum(r['volumen'] for r in rows),
         'sectores': sorted({r['sector'] for r in rows}),

@@ -167,9 +167,39 @@ eligieron para gasoil.
 - **Destildar todos los sectores mostraba todos**: el backend no distinguía
   "parámetro ausente" de "parámetro vacío". Ahora `_lista()` devuelve `None` vs
   `[]` y son casos distintos.
+- **"Unexpected token '<', \"<!doctype\"..."**: el endpoint devolvía la página
+  HTML de error de Werkzeug y el navegador intentaba parsearla como JSON, con
+  lo que el mensaje que veía el usuario no decía nada del problema real. Ahora
+  hay `errorhandler` para 413 y para cualquier excepción que devuelve JSON en
+  las rutas `/api/`, y el cliente tiene `leerJson()` que, si igual llega HTML,
+  muestra el código de estado y el texto plano. **El límite de subida era de
+  40 MB** y un .xlsx guardado desde Excel lo puede pasar: se subió a 250 MB.
 - **La estimación se aplicaba sola**: como 2026 tiene datos sólo hasta junio,
   julio a diciembre se estimaban sin pedirlo y el total por defecto pasaba de
   365,7 M a 378,0 M. Ahora es opt-in con el checkbox.
+
+## Rendimiento de la carga (medido)
+
+Con el histórico completo (478.444 filas):
+
+| Etapa | Tiempo |
+|---|---|
+| Parsear el **CSV** | 3,2 s (147.000 filas/s) |
+| Parsear el **.xlsx** | 35,6 s (13.400 filas/s) |
+| Carga entera por el endpoint (.xlsx) | **43,4 s** |
+| Carga entera por el endpoint (.csv) | ~9,3 s |
+
+**El Excel tarda 11 veces más que el CSV**: openpyxl es lento y no hay
+alternativa sin sumar una dependencia. Para el histórico completo conviene el
+CSV; el Excel es cómodo para la carga mensual, que son ~2.400 filas.
+
+La inserción va **por lotes de 20.000**: SQLAlchemy arma la lista de
+parámetros entera y con medio millón de filas duplicaba la memoria. El pico
+del proceso bajó de ~430 MB a ~144 MB.
+
+`run_local.py` levanta waitress con `channel_timeout=1800`. El default es 120 s
+y una carga larga en una máquina lenta lo pasaba, cortando la conexión sin
+explicación.
 
 ## Detalles que no son obvios
 

@@ -10,6 +10,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import func, and_, inspect, text
+from werkzeug.exceptions import HTTPException
 import click
 
 from models import (db, VolumeMonthly, VolumeUploadLog, RegressionPoint,
@@ -23,7 +24,9 @@ app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me-planning')
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    MAX_CONTENT_LENGTH=40 * 1024 * 1024,
+    # Un .xlsx con el historico completo ronda los 13 MB si lo genera un
+    # script, pero guardado desde Excel puede multiplicarse por el formato.
+    MAX_CONTENT_LENGTH=250 * 1024 * 1024,
 )
 
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///local_dev.db')
@@ -35,6 +38,27 @@ db.init_app(app)
 Compress(app)
 
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"])
+
+
+@app.errorhandler(413)
+def _demasiado_grande(e):
+    tope = app.config['MAX_CONTENT_LENGTH'] / (1024 * 1024)
+    return jsonify({'error': f'El archivo supera el limite de {tope:.0f} MB.'}), 413
+
+
+@app.errorhandler(Exception)
+def _error_no_previsto(e):
+    """Devuelve JSON en las rutas de API en vez de la pagina HTML de Werkzeug.
+
+    Sin esto el navegador intenta parsear "<!doctype html>" como JSON y el
+    usuario ve "Unexpected token '<'", que no dice nada sobre lo que fallo.
+    """
+    if isinstance(e, HTTPException) and e.code and e.code < 500:
+        return e
+    app.logger.exception('Error no previsto en %s', request.path)
+    if request.path.startswith('/api/'):
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    return e
 
 
 def current_user():
@@ -513,10 +537,15 @@ def api_upload_volumen():
         else:
             to_insert.append(r)
 
-    if to_insert:
-        db.session.bulk_insert_mappings(VolumeMonthly, to_insert)
-    if to_update:
-        db.session.bulk_update_mappings(VolumeMonthly, to_update)
+    # Por lotes: SQLAlchemy arma la lista de parametros entera y con medio
+    # millon de filas duplica la memoria del proceso.
+    LOTE = 20_000
+    for i in range(0, len(to_insert), LOTE):
+        db.session.bulk_insert_mappings(VolumeMonthly, to_insert[i:i + LOTE])
+        db.session.commit()
+    for i in range(0, len(to_update), LOTE):
+        db.session.bulk_update_mappings(VolumeMonthly, to_update[i:i + LOTE])
+        db.session.commit()
     db.session.commit()
     inserted, updated = len(to_insert), len(to_update)
     log = VolumeUploadLog(

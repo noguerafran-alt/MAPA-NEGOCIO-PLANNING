@@ -18,4 +18,6 @@ if __name__ == '__main__':
     PORT = 5000
     print(f"Mapa Gasoil/Naftas corriendo en http://{HOST}:{PORT}")
     print("Dejá esta ventana abierta. Para cerrarlo: Ctrl+C.")
-    serve(app, host=HOST, port=PORT, threads=4)
+    # channel_timeout por defecto es 120s: la carga del historico completo
+    # puede pasarlo y la conexion se corta sin explicacion.
+    serve(app, host=HOST, port=PORT, threads=4, channel_timeout=1800)

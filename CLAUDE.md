@@ -3,7 +3,8 @@
 App interna de análisis de volúmenes de combustible en Argentina: gasoil
 (GO2/GO3) y naftas (N2/N3) por año, mes, petrolera, provincia y sector.
 Tiene un mapa provincial, una página de proyecciones con un modelo de
-regresión y un panel de admin para cargar datos. Flask + SQLAlchemy,
+regresión, una pestaña que explica los modelos y un panel de admin para
+cargar datos. Flask + SQLAlchemy,
 SQLite en local y Postgres en producción.
 
 ## Regla de oro: actualizar ESTADO.md
@@ -20,6 +21,11 @@ base, una decisión de diseño no obvia (y el motivo), **algo que se probó y
 se descartó, con los números que lo respaldan** (evita reintentarlo), un
 bug que costó encontrar, y lo que quedó a medias.
 
+Si el cambio toca un modelo —un método, un backtest, una constante como
+`ERROR_POR_HORIZONTE`— entonces **`templates/modelo.html` es parte del
+cambio**, no un extra: es la explicación que ve quien usa la app, y si
+queda desactualizada miente con autoridad.
+
 Lo de "con los números" no es decorativo: buena parte de este proyecto son
 decisiones de modelado que sólo se sostienen por un backtest. Sin el número
 al lado, la próxima sesión no tiene cómo saber si una idea ya se midió y
@@ -34,6 +40,13 @@ perdió.
 - **Frontend**: Jinja + HTML/JS vanilla sin build step, todo en
   `templates/`. Cada página tiene un único `<script>` con sus funciones; no
   hay módulos ES ni bundler. Leaflet para el mapa, Chart.js para las series.
+  Las páginas son `/` (mapa), `/proyecciones`, `/modelo` (sólo lectura, explica
+  los dos modelos) y `/admin`. El `<nav>` está repetido en cada template: al
+  agregar una página hay que sumarla en las cuatro.
+- **Geodatos**: `static/rutas_nacionales.geojson` y `static/provincias.geojson`
+  vienen versionados y se regeneran con los scripts de `tools/` (Overpass,
+  ODbL). No se descargan en runtime: la app tiene que servir igual sin
+  internet salvo por los tiles.
 - **Datos**: `volume_monthly` es la tabla grande (~475.000 filas, 2010-2026),
   con constraint única sobre
   `(anio, mes, petrolera, provincia, sector, producto)`. `regression_point` y
@@ -56,6 +69,10 @@ perdió.
   pasaron desapercibidos justamente por callarse (ver ESTADO.md).
 - **Lo estimado se marca como estimado**, siempre, y con el error medido al
   lado. Un número proyectado nunca se muestra igual que uno real.
+- **Las métricas se nombran.** WAPE y MAPE no son intercambiables y en este
+  repo conviven las dos: el mapa se mide con WAPE (ponderado por volumen) y la
+  regresión con MAPE. Un porcentaje sin decir cuál de las dos es no sirve para
+  comparar.
 - **Antes de elegir un método de proyección, se lo mide contra los datos
   reales** con un backtest, y el resultado se anota en ESTADO.md. Ya pasó
   varias veces que la opción intuitivamente mejor perdió.

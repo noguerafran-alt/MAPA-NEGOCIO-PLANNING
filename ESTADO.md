@@ -42,7 +42,8 @@
 ### Modelo (`/modelo`, `templates/modelo.html`)
 
 Pestaña de sólo lectura que explica los dos modelos y por qué son distintos: la
-regresión del total país y el naive estacional del mapa. Incluye los backtests
+regresión del total país y el naive estacional del mapa. Define el **WAPE** y
+por qué no se usa MAPE al grano del mapa. Incluye los backtests
 que respaldan cada decisión y una sección con lo medido del gradient boosting,
 que **no corre en la app** — no hay scikit-learn en `requirements.txt`.
 
@@ -81,6 +82,13 @@ arreglarlo es normalizar en el importador.
 
 **No repetir estos experimentos sin leer esto primero.** Todos son backtests
 sobre los datos reales (2010-01 a 2026-06, 478.444 filas).
+
+**La métrica es WAPE**, no MAPE: `Σ|real − estimado| / Σ|real|`. Se pondera por
+volumen a propósito. Con 4.497 series de tamaños muy distintos, el MAPE
+promedia porcentajes por serie y una que vendió 3 m³ y se estimó en 6 aporta un
+error de 100%, pesando igual que Buenos Aires errándole por 2%. Si se compara
+contra un número nuevo, asegurarse de que también sea WAPE — el 2,99% / 5,26%
+de la regresión es MAPE y **no es comparable** con el 17,8% de acá.
 
 ### La proyección usa naive estacional, y no es por simplicidad
 
@@ -252,6 +260,15 @@ explicación.
 
 ## Pendiente
 
+- **Normalizar la unidad del MAPE**: `regression_config.mape` guarda una
+  fracción cuando lo calcula el ajuste por mínimos cuadrados (0,0526) y puntos
+  porcentuales cuando lo importa el Excel (2,803). Proyecciones y Modelo lo
+  muestran ×100, así que un MAPE recién importado se ve 100 veces más grande.
+  El arreglo es dividir por 100 en el importador y migrar los valores ya
+  guardados. Está avisado en pantalla mientras tanto.
+- **La pestaña Modelo se actualiza junto con el modelo.** Si cambia un método,
+  un backtest o una constante, `templates/modelo.html` es parte del cambio: es
+  la única explicación que ve quien usa la app.
 - **Recuperar el modelo de regresión original**: falta saber qué variables usó
   (ver arriba). Mientras tanto los coeficientes se ajustan a mano.
 - **Mejorar la proyección a 12 meses**: con los datos actuales el naive es lo

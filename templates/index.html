@@ -101,6 +101,21 @@
     .tip-bar-fill { height: 100%; border-radius: 3px; }
     .tip-hint { margin-top: .45rem; font-size: .68rem; color: #64748b; }
     .tip-empty { font-size: .75rem; color: #94a3b8; }
+    .tip-badge {
+      font-size: .6rem; background: #f59e0b; color: #1c1917; padding: .05rem .25rem;
+      border-radius: 3px; vertical-align: middle; font-weight: 700;
+    }
+    .tip-est { font-size: .72rem; color: #fbbf24; margin-bottom: .35rem; }
+    .aviso-est {
+      margin-top: .5rem; padding: .5rem .6rem; border-radius: 6px;
+      background: #1c1917; border-left: 3px solid #f59e0b;
+      font-size: .72rem; color: #fbbf24; line-height: 1.45;
+    }
+    .aviso-est b { color: #fde68a; }
+    .chk-estimar {
+      display: flex; align-items: center; gap: .4rem; margin: .1rem 0 .6rem;
+      font-size: .78rem; color: #fbbf24; cursor: pointer;
+    }
     .leaflet-tooltip.ruta-tip {
       background: #1c1917; border: 1px solid #b45309; color: #fbbf24;
       font-size: .72rem; font-weight: 600; padding: .15rem .4rem; border-radius: 4px;
@@ -134,6 +149,9 @@
       <div class="ms" id="msPetroleras"></div>
       <label>Sectores</label>
       <div class="ms" id="msSectores"></div>
+      <label class="chk-estimar">
+        <input type="checkbox" id="chkEstimar"> Estimar meses sin dato real
+      </label>
       <button class="apply" onclick="cargarMapa()" style="margin-top:.4rem">Aplicar</button>
     </div>
 
@@ -142,6 +160,7 @@
       <div class="stat" id="totalGeneral">—</div>
       <div class="stat-label">m³ (aprox.)</div>
       <div class="stat-label" id="sinDatos" style="display:none;color:#f87171;margin-top:.4rem"></div>
+      <div class="aviso-est" id="avisoEstimado" style="display:none"></div>
     </div>
 
     <div class="panel prov-detail" id="provDetail">
@@ -251,7 +270,8 @@ function crearMultiSelect(contenedorId, items, nombre) {
   const lista = cont.querySelector('.ms-list');
 
   lista.innerHTML = items.length
-    ? items.map(it => `<label><input type="checkbox" value="${escaparAttr(it.valor)}" checked> ${it.etiqueta}</label>`).join('')
+    ? items.map(it => `<label><input type="checkbox" value="${escaparAttr(it.valor)}"${
+        it.marcado === false ? '' : ' checked'}> ${it.etiqueta}</label>`).join('')
     : `<div class="ms-vacio">Sin ${nombre} disponibles</div>`;
 
   const inputs = () => Array.from(lista.querySelectorAll('input'));
@@ -288,7 +308,11 @@ async function initFiltros() {
   const r = await fetch('/api/filtros');
   const d = await r.json();
   const simple = v => ({ valor: v, etiqueta: v });
-  crearMultiSelect('msAnios',      (d.anios || []).map(simple), 'años');
+  // Los anios futuros se ofrecen pero arrancan desmarcados: el mapa muestra
+  // datos reales salvo que se pidan estimaciones explicitamente.
+  const anios = (d.anios || []).map(simple).concat(
+    (d.anios_futuros || []).map(a => ({ valor: a, etiqueta: a + ' (est.)', marcado: false })));
+  crearMultiSelect('msAnios', anios, 'años');
   crearMultiSelect('msMeses',      (d.meses || []).map(m => ({ valor: m, etiqueta: MESES_NOMBRE[m-1] || m })), 'meses');
   crearMultiSelect('msProductos',  (d.productos || []).map(simple), 'productos');
   crearMultiSelect('msPetroleras', (d.petroleras || []).map(simple), 'petroleras');
@@ -305,9 +329,12 @@ async function cargarMapa() {
     petroleras: filtros.msPetroleras.valores().join(','),
     sectores:   filtros.msSectores.valores().join(','),
   });
+  if (document.getElementById('chkEstimar').checked) params.set('estimar', '1');
 
   const r = await fetch('/api/volumenes?' + params);
-  currentData = await r.json();
+  const resp = await r.json();
+  currentData = resp.provincias || {};
+  const estimados = resp.estimados || [];
 
   markersLayer.clearLayers();
   let maxTotal = 0;
@@ -325,11 +352,28 @@ async function cargarMapa() {
   const aviso = document.getElementById('sinDatos');
   if (!Object.keys(currentData).length) {
     aviso.style.display = 'block';
-    aviso.textContent = vacios.length
-      ? 'Sin datos: no hay nada seleccionado en ' + vacios.length + ' filtro(s).'
-      : 'Sin datos para esta combinación de filtros.';
+    if (vacios.length) {
+      aviso.textContent = 'Sin datos: no hay nada seleccionado en ' + vacios.length + ' filtro(s).';
+    } else if (!document.getElementById('chkEstimar').checked) {
+      aviso.innerHTML = 'Sin datos reales para estos años. Marcá <b>Estimar meses sin dato real</b> para ver la estimación.';
+    } else {
+      aviso.textContent = 'Sin datos para esta combinación de filtros.';
+    }
   } else {
     aviso.style.display = 'none';
+  }
+
+  const avisoEst = document.getElementById('avisoEstimado');
+  const sumEst = Object.values(currentData).reduce((a, d) => a + (d.estimado || 0), 0);
+  if (estimados.length) {
+    const meses = estimados.map(e => e.pedido[0] + '-' + String(e.pedido[1]).padStart(2, '0'));
+    avisoEst.style.display = 'block';
+    avisoEst.innerHTML = `<b>${formatNum(sumEst)} m³ estimados</b> (${(sumEst / (sumTotal || 1) * 100).toFixed(0)}%
+      del total). ${estimados.length} mes(es) sin dato real: ${meses.slice(0, 6).join(', ')}${
+      meses.length > 6 ? ' y ' + (meses.length - 6) + ' mas' : ''}.
+      Se estiman con el mismo mes del último año con dato.`;
+  } else {
+    avisoEst.style.display = 'none';
   }
 
   const legend = document.getElementById('legend');
@@ -345,9 +389,13 @@ async function cargarMapa() {
     const intensity = maxTotal > 0 ? d.total / maxTotal : 0;
     const colorIdx = Math.min(COLORS.length - 1, Math.floor(intensity * COLORS.length));
     const radius = 8 + intensity * 28;
+    // Borde punteado ambar cuando el valor incluye meses estimados.
+    const esEst = (d.estimado || 0) > 0;
     const circle = L.circleMarker([d.lat, d.lon], {
-      radius, fillColor: COLORS[colorIdx], color: '#fff', weight: 1,
-      fillOpacity: 0.85
+      radius, fillColor: COLORS[colorIdx],
+      color: esEst ? '#f59e0b' : '#fff', weight: esEst ? 2 : 1,
+      dashArray: esEst ? '4,3' : null,
+      fillOpacity: esEst ? 0.6 : 0.85
     }).bindTooltip(tooltipProv(prov, d), {
       direction: 'top', className: 'prov-tip', opacity: 1, offset: [0, -4]
     });
@@ -375,8 +423,13 @@ function tooltipProv(prov, d) {
       <span class="tip-pct">${pct.toFixed(1)}%</span>
     </div>`;
   }).join('');
-  return `<div class="tip-title">${prov}</div>
+  const est = d.estimado || 0;
+  const marca = est > 0
+    ? `<div class="tip-est">⚠ ${formatNum(est)} m³ estimados (${(est/total*100).toFixed(0)}%) — no son datos reales</div>`
+    : '';
+  return `<div class="tip-title">${prov}${est > 0 ? ' <span class="tip-badge">EST.</span>' : ''}</div>
           <div class="tip-total">Total ${formatNum(total)} m³</div>
+          ${marca}
           ${filas}
           <div class="tip-hint">Clic para fijar el detalle</div>`;
 }

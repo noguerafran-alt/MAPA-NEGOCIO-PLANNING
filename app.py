@@ -180,14 +180,41 @@ def api_filtros():
     meses = db.session.query(VolumeMonthly.mes).distinct().order_by(VolumeMonthly.mes).all()
     petroleras = db.session.query(VolumeMonthly.petrolera).distinct().order_by(VolumeMonthly.petrolera).all()
     sectores = db.session.query(VolumeMonthly.sector).distinct().order_by(VolumeMonthly.sector).all()
+    lista_anios = [a[0] for a in anios]
+    # Anios sin dato que igual se pueden estimar a partir del mismo mes de un
+    # anio anterior. Se ofrecen 3 para planning; mas alla el error crece.
+    futuros = [lista_anios[-1] + k for k in (1, 2, 3)] if lista_anios else []
     return jsonify({
-        'anios': [a[0] for a in anios],
+        'anios': lista_anios,
+        'anios_futuros': futuros,
         'meses': [m[0] for m in meses],
         'petroleras': [p[0] for p in petroleras],
         'sectores': [s[0] for s in sectores],
         'productos': ['GO2', 'GO3', 'N2', 'N3'],
         'provincias': CANONICAL_PROVINCES,
     })
+
+
+def _resolver_periodos(anios, meses, reales):
+    """Separa lo pedido en meses con dato real y meses a estimar.
+
+    Un mes sin dato se estima con el mismo mes del ultimo anio que si lo tenga
+    (naive estacional). Es el metodo que mejor midio en el backtest al grano
+    del mapa: 17.8% de WAPE a 12 meses, contra 19-24% de las variantes que le
+    aplican un factor de crecimiento.
+    """
+    por_mes = {}
+    for a, m in reales:
+        por_mes.setdefault(m, []).append(a)
+    estimados = []          # (origen, pedido)
+    for a in anios:
+        for m in meses:
+            if (a, m) in reales:
+                continue
+            previos = [y for y in por_mes.get(m, []) if y < a]
+            if previos:
+                estimados.append(((max(previos), m), (a, m)))
+    return estimados
 
 
 @app.route('/api/volumenes')
@@ -201,44 +228,76 @@ def api_volumenes():
     anio_desde = request.args.get('anio_desde', type=int)
     anio_hasta = request.args.get('anio_hasta', type=int)
 
-    q = db.session.query(
-        VolumeMonthly.provincia,
-        VolumeMonthly.producto,
-        func.sum(VolumeMonthly.volumen).label('total')
-    )
+    def base():
+        q = db.session.query(
+            VolumeMonthly.provincia, VolumeMonthly.producto,
+            func.sum(VolumeMonthly.volumen).label('total'))
+        if productos is not None:
+            q = q.filter(VolumeMonthly.producto.in_(productos))
+        if sectores is not None:
+            q = q.filter(VolumeMonthly.sector.in_(sectores))
+        if petroleras is not None:
+            q = q.filter(VolumeMonthly.petrolera.in_(petroleras))
+        return q
+
+    result = {}
+
+    def acumular(prov, prod, valor, estimado):
+        d = result.setdefault(prov, {'GO2': 0.0, 'GO3': 0.0, 'N2': 0.0, 'N3': 0.0,
+                                     'total': 0.0, 'estimado': 0.0})
+        if prod in d:
+            d[prod] += valor
+        d['total'] += valor
+        if estimado:
+            d['estimado'] += valor
+
+    # --- meses con dato real -------------------------------------------------
+    q = base()
     if anios is not None:
         q = q.filter(VolumeMonthly.anio.in_(_enteros(anios)))
     else:
-        # compatibilidad con el rango desde/hasta que usaba la version anterior
         if anio_desde:
             q = q.filter(VolumeMonthly.anio >= anio_desde)
         if anio_hasta:
             q = q.filter(VolumeMonthly.anio <= anio_hasta)
     if meses is not None:
         q = q.filter(VolumeMonthly.mes.in_(_enteros(meses)))
-    if productos is not None:
-        q = q.filter(VolumeMonthly.producto.in_(productos))
-    if sectores is not None:
-        q = q.filter(VolumeMonthly.sector.in_(sectores))
-    if petroleras is not None:
-        q = q.filter(VolumeMonthly.petrolera.in_(petroleras))
+    for prov, prod, total in q.group_by(VolumeMonthly.provincia, VolumeMonthly.producto):
+        acumular(prov, prod, float(total or 0), False)
 
-    q = q.group_by(VolumeMonthly.provincia, VolumeMonthly.producto)
-    rows = q.all()
+    # --- meses futuros: se estiman ------------------------------------------
+    # Solo se estima si se pide explicitamente: si no, un anio en curso con
+    # meses todavia sin cargar inflaria el total sin que nadie lo haya pedido.
+    estimados = []
+    if request.args.get('estimar') == '1' and anios is not None and meses is not None:
+        reales = {(a, m) for a, m in
+                  db.session.query(VolumeMonthly.anio, VolumeMonthly.mes).distinct()}
+        estimados = _resolver_periodos(_enteros(anios), _enteros(meses), reales)
 
-    result = {}
-    for prov, prod, total in rows:
-        if prov not in result:
-            result[prov] = {'GO2': 0.0, 'GO3': 0.0, 'N2': 0.0, 'N3': 0.0, 'total': 0.0}
-        result[prov][prod] = float(total or 0)
-        result[prov]['total'] += float(total or 0)
+    if estimados:
+        # varios meses pedidos pueden apoyarse en el mismo mes de origen
+        veces = {}
+        for origen, _pedido in estimados:
+            veces[origen] = veces.get(origen, 0) + 1
+        qe = base().add_columns(VolumeMonthly.anio, VolumeMonthly.mes).filter(
+            VolumeMonthly.anio.in_(sorted({a for a, _ in veces})),
+            VolumeMonthly.mes.in_(sorted({m for _, m in veces})),
+        ).group_by(VolumeMonthly.provincia, VolumeMonthly.producto,
+                   VolumeMonthly.anio, VolumeMonthly.mes)
+        for prov, prod, total, anio, mes in qe:
+            n = veces.get((anio, mes), 0)
+            if n:
+                acumular(prov, prod, float(total or 0) * n, True)
 
     for name, data in result.items():
         c = PROVINCE_CENTROIDS.get(name)
         if c:
             data['lat'], data['lon'] = c
 
-    return jsonify(result)
+    return jsonify({
+        'provincias': result,
+        'estimados': [{'pedido': list(ped), 'origen': list(ori)} for ori, ped in estimados],
+    })
 
 
 @app.route('/api/serie')

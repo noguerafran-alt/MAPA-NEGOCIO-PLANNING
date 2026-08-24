@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proyecciones — Gasoil & Naftas</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .6rem 1.2rem; background: #1e293b; border-bottom: 1px solid #334155;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+    nav a { color: #94a3b8; text-decoration: none; margin-left: 1.2rem; font-size: .9rem; }
+    nav a:hover, nav a.active { color: #38bdf8; }
+    .content { max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .card {
+      background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 1rem;
+    }
+    .card .label { font-size: .75rem; color: #94a3b8; text-transform: uppercase; }
+    .card .value { font-size: 1.3rem; font-weight: 700; color: #38bdf8; margin-top: .2rem; }
+    .chart-box {
+      background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 1.2rem;
+    }
+    .error { background: #7f1d1d; color: #fecaca; padding: 1rem; border-radius: 8px; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>📈 Proyecciones — Modelo de Regresión</h1>
+  <nav>
+    <a href="/">Mapa</a>
+    <a href="/proyecciones" class="active">Proyecciones</a>
+    {% if user.nivel >= 2 %}<a href="/admin">Admin</a>{% endif %}
+    <a href="/logout">Salir</a>
+  </nav>
+</header>
+<div class="content">
+  <div id="error" class="error" style="display:none"></div>
+  <div class="cards" id="cards"></div>
+  <div class="chart-box">
+    <canvas id="chart" height="120"></canvas>
+  </div>
+</div>
+<script>
+function formatNum(n) {
+  if (n == null) return '—';
+  if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(2) + ' M';
+  if (Math.abs(n) >= 1e3) return (n/1e3).toFixed(1) + ' k';
+  return n.toFixed(0);
+}
+
+async function load() {
+  const r = await fetch('/api/proyeccion');
+  if (!r.ok) {
+    const e = await r.json();
+    document.getElementById('error').style.display = 'block';
+    document.getElementById('error').textContent = e.error || 'Error cargando proyección';
+    return;
+  }
+  const data = await r.json();
+
+  const c = data.coeficientes;
+  document.getElementById('cards').innerHTML = `
+    <div class="card"><div class="label">b1 (X1)</div><div class="value">${c.b1.toFixed(2)}</div></div>
+    <div class="card"><div class="label">b2 (X2)</div><div class="value">${c.b2.toFixed(4)}</div></div>
+    <div class="card"><div class="label">b3 (X3)</div><div class="value">${c.b3.toFixed(2)}</div></div>
+    <div class="card"><div class="label">b4 (X4)</div><div class="value">${c.b4.toFixed(2)}</div></div>
+    <div class="card"><div class="label">MAPE</div><div class="value">${data.mape != null ? (data.mape*100).toFixed(2)+'%' : '—'}</div></div>
+    <div class="card"><div class="label">R²</div><div class="value">${data.r2 != null ? data.r2.toFixed(3) : '—'}</div></div>
+  `;
+
+  const labels = data.serie.map(p => `${p.anio}-${String(p.mes).padStart(2,'0')}`);
+  const reales = data.serie.map(p => p.yt);
+  const pred = data.serie.map(p => p.predicho);
+
+  new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Yt real (Gasoil + Nafta total país)',
+          data: reales,
+          borderColor: '#38bdf8',
+          backgroundColor: 'transparent',
+          pointRadius: 0,
+          borderWidth: 2,
+        },
+        {
+          label: 'Predicho (modelo)',
+          data: pred,
+          borderColor: '#f97316',
+          backgroundColor: 'transparent',
+          borderDash: [5, 4],
+          pointRadius: 0,
+          borderWidth: 2,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: '#94a3b8', maxTicksLimit: 20 }, grid: { color: '#1e293b' } },
+        y: { ticks: { color: '#94a3b8', callback: v => formatNum(v) }, grid: { color: '#334155' } }
+      },
+      plugins: {
+        legend: { labels: { color: '#e2e8f0' } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${formatNum(ctx.raw)}`
+          }
+        }
+      }
+    }
+  });
+}
+load();
+</script>
+</body>
+</html>

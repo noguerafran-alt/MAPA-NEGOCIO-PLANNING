@@ -122,6 +122,45 @@
       box-shadow: none;
     }
     .leaflet-tooltip.ruta-tip:before { display: none; }
+
+    /* Panel de comparacion (B), a la izquierda. Oculto hasta tocar "Comparar". */
+    .sidebar-b {
+      border-left: none; border-right: 1px solid #334155;
+      box-shadow: inset -3px 0 0 #a855f7;
+    }
+    .sidebar-b[hidden] { display: none; }
+    .sidebar-b .panel h3 { color: #c084fc; }
+    .sidebar-b .stat { color: #c084fc; }
+    .sidebar-b .ms.abierto .ms-btn, .sidebar-b .ms-panel { border-color: #a855f7; }
+    .sidebar-b button.apply { background: #9333ea; }
+    .sidebar-b button.apply:hover { background: #7e22ce; }
+    .cmp-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+    .cmp-cerrar {
+      background: none; border: 1px solid #475569; color: #94a3b8;
+      border-radius: 6px; padding: .1rem .4rem; cursor: pointer; font-size: .9rem;
+      font-family: inherit; line-height: 1.2;
+    }
+    .cmp-cerrar:hover { border-color: #f87171; color: #f87171; }
+    button.comparar {
+      width: 100%; padding: .45rem; margin-top: .4rem; border: 1px solid #a855f7;
+      border-radius: 6px; background: transparent; color: #c084fc;
+      font-weight: 600; cursor: pointer; font-size: .82rem; font-family: inherit;
+    }
+    button.comparar:hover { background: #2e1065; }
+    button.comparar.activo { background: #6b21a8; color: #f3e8ff; }
+    .chk-mapa {
+      display: flex; align-items: center; gap: .4rem; margin: .1rem 0 .5rem;
+      font-size: .78rem; color: #c084fc; cursor: pointer;
+    }
+    .cmp-nota { font-size: .68rem; color: #64748b; margin-top: .3rem; line-height: 1.4; }
+    /* Comparacion dentro del tooltip */
+    .tip-cmp { margin-top: .45rem; padding-top: .4rem; border-top: 1px solid #334155; }
+    .tip-cmp-row { display: flex; justify-content: space-between; gap: .8rem; font-size: .75rem; }
+    .tip-cmp-a { color: #38bdf8; }
+    .tip-cmp-b { color: #c084fc; }
+    .tip-cmp-d { font-weight: 700; }
+    .tip-cmp-d.sube { color: #4ade80; }
+    .tip-cmp-d.baja { color: #f87171; }
   </style>
 </head>
 <body>
@@ -135,6 +174,48 @@
   </nav>
 </header>
 <div class="main">
+  <div class="sidebar sidebar-b" id="sidebarB" hidden>
+    <div class="panel">
+      <div class="cmp-head">
+        <h3 style="margin:0">Comparación (B)</h3>
+        <button class="cmp-cerrar" id="btnCerrarCmp" title="Cerrar comparación">✕</button>
+      </div>
+      <label style="margin-top:.6rem">Años</label>
+      <div class="ms" id="msAniosB"></div>
+      <label>Meses</label>
+      <div class="ms" id="msMesesB"></div>
+      <label>Productos</label>
+      <div class="ms" id="msProductosB"></div>
+      <label>Petroleras</label>
+      <div class="ms" id="msPetrolerasB"></div>
+      <label>Sectores</label>
+      <div class="ms" id="msSectoresB"></div>
+      <label class="chk-estimar">
+        <input type="checkbox" id="chkEstimarB"> Estimar meses sin dato real
+      </label>
+      <label class="chk-mapa">
+        <input type="checkbox" id="chkFiltrarMapaB"> También filtrar el mapa
+      </label>
+      <div class="cmp-nota" id="cmpNota">
+        Los círculos siguen mostrando el panel derecho. Activá la casilla para
+        que el mapa muestre la diferencia B − A.
+      </div>
+      <button class="apply" onclick="cargarMapa()" style="margin-top:.5rem">Aplicar</button>
+    </div>
+
+    <div class="panel">
+      <h3>Total filtrado (B)</h3>
+      <div class="stat" id="totalGeneralB">—</div>
+      <div class="stat-label">m³ (aprox.)</div>
+      <div class="stat-label" id="sinDatosB" style="display:none;color:#f87171;margin-top:.4rem"></div>
+      <div class="aviso-est" id="avisoEstimadoB" style="display:none"></div>
+    </div>
+
+    <div class="panel">
+      <h3>A vs B</h3>
+      <div id="cmpResumen" class="stat-label">—</div>
+    </div>
+  </div>
   <div id="map"></div>
   <div class="sidebar">
     <div class="panel">
@@ -153,6 +234,7 @@
         <input type="checkbox" id="chkEstimar"> Estimar meses sin dato real
       </label>
       <button class="apply" onclick="cargarMapa()" style="margin-top:.4rem">Aplicar</button>
+      <button class="comparar" id="btnComparar">Comparar con otra selección</button>
     </div>
 
     <div class="panel">
@@ -200,6 +282,9 @@ map.getPane('rutasPane').style.zIndex = 350;
 let markersLayer = L.layerGroup().addTo(map);
 let rutasLayer = null;
 let currentData = {};
+let datosA = {}, datosB = {}, respA = null, respB = null;
+
+const COLOR_SUBE = '#22c55e', COLOR_BAJA = '#ef4444', COLOR_IGUAL = '#64748b';
 
 const COLORS = ['#0c4a6e','#0369a1','#0ea5e9','#38bdf8','#7dd3fc','#e0f2fe'];
 const PRODUCTOS = ['GO2','GO3','N2','N3'];
@@ -313,49 +398,50 @@ async function initFiltros() {
   const anios = (d.anios || []).map(simple).concat(
     (d.anios_futuros || []).map(f => ({
       valor: f.anio, etiqueta: `${f.anio} (est. ±${f.error.toFixed(0)}%)`, marcado: false })));
-  crearMultiSelect('msAnios', anios, 'años');
-  crearMultiSelect('msMeses',      (d.meses || []).map(m => ({ valor: m, etiqueta: MESES_NOMBRE[m-1] || m })), 'meses');
-  crearMultiSelect('msProductos',  (d.productos || []).map(simple), 'productos');
-  crearMultiSelect('msPetroleras', (d.petroleras || []).map(simple), 'petroleras');
-  crearMultiSelect('msSectores',   (d.sectores || []).map(simple), 'sectores');
+  const meses = (d.meses || []).map(m => ({ valor: m, etiqueta: MESES_NOMBRE[m-1] || m }));
+
+  // Los dos paneles son iguales; '' es el de la derecha y 'B' el de comparacion.
+  ['', 'B'].forEach(suf => {
+    crearMultiSelect('msAnios' + suf,      anios.map(o => Object.assign({}, o)), 'años');
+    crearMultiSelect('msMeses' + suf,      meses.map(o => Object.assign({}, o)), 'meses');
+    crearMultiSelect('msProductos' + suf,  (d.productos || []).map(simple), 'productos');
+    crearMultiSelect('msPetroleras' + suf, (d.petroleras || []).map(simple), 'petroleras');
+    crearMultiSelect('msSectores' + suf,   (d.sectores || []).map(simple), 'sectores');
+  });
 }
 
-async function cargarMapa() {
+const comparando = () => !document.getElementById('sidebarB').hidden;
+const mapaEnDiferencia = () =>
+  comparando() && document.getElementById('chkFiltrarMapaB').checked;
+
+function paramsPanel(suf) {
   // Una lista vacia viaja como parametro vacio: el backend lo entiende como
   // "no seleccionaron nada" y devuelve cero, distinto de no filtrar.
   const params = new URLSearchParams({
-    anios:      filtros.msAnios.valores().join(','),
-    meses:      filtros.msMeses.valores().join(','),
-    productos:  filtros.msProductos.valores().join(','),
-    petroleras: filtros.msPetroleras.valores().join(','),
-    sectores:   filtros.msSectores.valores().join(','),
+    anios:      filtros['msAnios' + suf].valores().join(','),
+    meses:      filtros['msMeses' + suf].valores().join(','),
+    productos:  filtros['msProductos' + suf].valores().join(','),
+    petroleras: filtros['msPetroleras' + suf].valores().join(','),
+    sectores:   filtros['msSectores' + suf].valores().join(','),
   });
-  if (document.getElementById('chkEstimar').checked) params.set('estimar', '1');
+  if (document.getElementById('chkEstimar' + suf).checked) params.set('estimar', '1');
+  return params;
+}
 
-  const r = await fetch('/api/volumenes?' + params);
-  const resp = await r.json();
-  currentData = resp.provincias || {};
-  const estimados = resp.estimados || [];
+function pintarPanel(suf, resp, datos) {
+  const sumTotal = Object.values(datos).reduce((a, d) => a + d.total, 0);
+  document.getElementById('totalGeneral' + suf).textContent = formatNum(sumTotal);
 
-  markersLayer.clearLayers();
-  let maxTotal = 0;
-  let sumTotal = 0;
-  Object.values(currentData).forEach(d => {
-    if (d.total > maxTotal) maxTotal = d.total;
-    sumTotal += d.total;
-  });
-  document.getElementById('totalGeneral').textContent = formatNum(sumTotal);
-
-  // Con algun filtro en "Ninguno" no vuelve nada: conviene decir por que el
-  // mapa quedo vacio en vez de mostrar un cero sin explicacion.
+  // Con algun filtro en "Ninguno" no vuelve nada: conviene decir por que
+  // quedo vacio en vez de mostrar un cero sin explicacion.
   const vacios = ['msAnios','msMeses','msProductos','msPetroleras','msSectores']
-    .filter(k => filtros[k].valores().length === 0);
-  const aviso = document.getElementById('sinDatos');
-  if (!Object.keys(currentData).length) {
+    .filter(k => filtros[k + suf].valores().length === 0);
+  const aviso = document.getElementById('sinDatos' + suf);
+  if (!Object.keys(datos).length) {
     aviso.style.display = 'block';
     if (vacios.length) {
       aviso.textContent = 'Sin datos: no hay nada seleccionado en ' + vacios.length + ' filtro(s).';
-    } else if (!document.getElementById('chkEstimar').checked) {
+    } else if (!document.getElementById('chkEstimar' + suf).checked) {
       aviso.innerHTML = 'Sin datos reales para estos años. Marcá <b>Estimar meses sin dato real</b> para ver la estimación.';
     } else {
       aviso.textContent = 'Sin datos para esta combinación de filtros.';
@@ -364,8 +450,9 @@ async function cargarMapa() {
     aviso.style.display = 'none';
   }
 
-  const avisoEst = document.getElementById('avisoEstimado');
-  const sumEst = Object.values(currentData).reduce((a, d) => a + (d.estimado || 0), 0);
+  const avisoEst = document.getElementById('avisoEstimado' + suf);
+  const estimados = (resp && resp.estimados) || [];
+  const sumEst = Object.values(datos).reduce((a, d) => a + (d.estimado || 0), 0);
   if (estimados.length) {
     const meses = estimados.map(e => e.pedido[0] + '-' + String(e.pedido[1]).padStart(2, '0'));
     // El metodo repite el ultimo anio con dato, asi que todos los anios
@@ -387,42 +474,141 @@ async function cargarMapa() {
   } else {
     avisoEst.style.display = 'none';
   }
+  return sumTotal;
+}
 
+function pintarLeyenda(diferencia, maxValor) {
   const legend = document.getElementById('legend');
   legend.innerHTML = '';
+  if (diferencia) {
+    legend.innerHTML =
+      `<div class="legend-item"><div class="legend-swatch" style="background:${COLOR_SUBE}"></div>
+         B mayor que A — hasta ${formatNum(maxValor)}</div>
+       <div class="legend-item"><div class="legend-swatch" style="background:${COLOR_BAJA}"></div>
+         B menor que A — hasta ${formatNum(maxValor)}</div>
+       <div class="legend-item"><div class="legend-swatch" style="background:${COLOR_IGUAL}"></div>
+         sin diferencia</div>`;
+    return;
+  }
   COLORS.forEach((c, i) => {
-    const from = (maxTotal * i / COLORS.length);
-    const to = (maxTotal * (i+1) / COLORS.length);
+    const from = (maxValor * i / COLORS.length);
+    const to = (maxValor * (i + 1) / COLORS.length);
     legend.innerHTML += `<div class="legend-item"><div class="legend-swatch" style="background:${c}"></div>${formatNum(from)} – ${formatNum(to)}</div>`;
   });
+}
 
-  Object.entries(currentData).forEach(([prov, d]) => {
-    if (!d.lat) return;
-    const intensity = maxTotal > 0 ? d.total / maxTotal : 0;
-    const colorIdx = Math.min(COLORS.length - 1, Math.floor(intensity * COLORS.length));
-    const radius = 8 + intensity * 28;
-    // Borde punteado ambar cuando el valor incluye meses estimados.
-    const esEst = (d.estimado || 0) > 0;
-    const circle = L.circleMarker([d.lat, d.lon], {
-      radius, fillColor: COLORS[colorIdx],
-      color: esEst ? '#f59e0b' : '#fff', weight: esEst ? 2 : 1,
-      dashArray: esEst ? '4,3' : null,
-      fillOpacity: esEst ? 0.6 : 0.85
-    }).bindTooltip(tooltipProv(prov, d), {
+const vacio = () => ({ GO2: 0, GO3: 0, N2: 0, N3: 0, total: 0, estimado: 0 });
+
+function dibujarMapa() {
+  markersLayer.clearLayers();
+  const diff = mapaEnDiferencia();
+
+  if (!diff) {
+    let maxTotal = 0;
+    Object.values(datosA).forEach(d => { if (d.total > maxTotal) maxTotal = d.total; });
+    pintarLeyenda(false, maxTotal);
+    Object.entries(datosA).forEach(([prov, d]) => {
+      if (!d.lat) return;
+      const intensity = maxTotal > 0 ? d.total / maxTotal : 0;
+      const colorIdx = Math.min(COLORS.length - 1, Math.floor(intensity * COLORS.length));
+      // Borde punteado ambar cuando el valor incluye meses estimados.
+      const esEst = (d.estimado || 0) > 0;
+      const circle = L.circleMarker([d.lat, d.lon], {
+        radius: 8 + intensity * 28, fillColor: COLORS[colorIdx],
+        color: esEst ? '#f59e0b' : '#fff', weight: esEst ? 2 : 1,
+        dashArray: esEst ? '4,3' : null,
+        fillOpacity: esEst ? 0.6 : 0.85
+      }).bindTooltip(tooltipProv(prov, d, datosB[prov]), {
+        direction: 'top', className: 'prov-tip', opacity: 1, offset: [0, -4]
+      });
+      circle.on('click', () => showProv(prov, d));
+      markersLayer.addLayer(circle);
+    });
+    return;
+  }
+
+  // Modo diferencia: el tamano es cuanto difieren y el color de que lado cae.
+  const provincias = new Set(Object.keys(datosA).concat(Object.keys(datosB)));
+  let maxAbs = 0;
+  provincias.forEach(p => {
+    const delta = ((datosB[p] || {}).total || 0) - ((datosA[p] || {}).total || 0);
+    if (Math.abs(delta) > maxAbs) maxAbs = Math.abs(delta);
+  });
+  pintarLeyenda(true, maxAbs);
+
+  provincias.forEach(prov => {
+    const a = datosA[prov], b = datosB[prov];
+    const coord = (a && a.lat) ? a : b;
+    if (!coord || !coord.lat) return;
+    const delta = ((b || {}).total || 0) - ((a || {}).total || 0);
+    const intensity = maxAbs > 0 ? Math.abs(delta) / maxAbs : 0;
+    const color = delta > 0 ? COLOR_SUBE : (delta < 0 ? COLOR_BAJA : COLOR_IGUAL);
+    const circle = L.circleMarker([coord.lat, coord.lon], {
+      radius: 6 + intensity * 26, fillColor: color, color: '#fff',
+      weight: 1, fillOpacity: 0.85
+    }).bindTooltip(tooltipProv(prov, a || vacio(), b), {
       direction: 'top', className: 'prov-tip', opacity: 1, offset: [0, -4]
     });
-    circle.on('click', () => showProv(prov, d));
+    circle.on('click', () => showProv(prov, a || vacio()));
     markersLayer.addLayer(circle);
   });
 }
 
-function tooltipProv(prov, d) {
+async function cargarMapa() {
+  const rA = await fetch('/api/volumenes?' + paramsPanel(''));
+  respA = await rA.json();
+  datosA = respA.provincias || {};
+  currentData = datosA;
+  const totalA = pintarPanel('', respA, datosA);
+
+  if (comparando()) {
+    const rB = await fetch('/api/volumenes?' + paramsPanel('B'));
+    respB = await rB.json();
+    datosB = respB.provincias || {};
+    const totalB = pintarPanel('B', respB, datosB);
+    const delta = totalB - totalA;
+    const pct = totalA > 0 ? (delta / totalA * 100) : null;
+    document.getElementById('cmpResumen').innerHTML =
+      `<div style="display:flex;justify-content:space-between"><span class="tip-cmp-a">A</span>
+         <b>${formatNum(totalA)}</b></div>
+       <div style="display:flex;justify-content:space-between"><span class="tip-cmp-b">B</span>
+         <b>${formatNum(totalB)}</b></div>
+       <div style="display:flex;justify-content:space-between;margin-top:.3rem;
+            padding-top:.3rem;border-top:1px solid #334155">
+         <span>B − A</span>
+         <b class="tip-cmp-d ${delta >= 0 ? 'sube' : 'baja'}">${delta >= 0 ? '+' : '−'}${
+           formatNum(Math.abs(delta))}${pct != null ? ` (${delta >= 0 ? '+' : '−'}${
+           Math.abs(pct).toFixed(1)}%)` : ''}</b></div>`;
+  } else {
+    respB = null;
+    datosB = {};
+  }
+
+  dibujarMapa();
+}
+
+function bloqueComparacion(totalA, dB) {
+  const totalB = (dB || {}).total || 0;
+  const delta = totalB - totalA;
+  const pct = totalA > 0 ? (delta / totalA * 100) : null;
+  return `<div class="tip-cmp">
+    <div class="tip-cmp-row"><span class="tip-cmp-a">A (derecha)</span><span>${formatNum(totalA)}</span></div>
+    <div class="tip-cmp-row"><span class="tip-cmp-b">B (izquierda)</span><span>${formatNum(totalB)}</span></div>
+    <div class="tip-cmp-row"><span>B − A</span>
+      <span class="tip-cmp-d ${delta >= 0 ? 'sube' : 'baja'}">${delta >= 0 ? '+' : '−'}${
+        formatNum(Math.abs(delta))}${pct != null ? ` (${delta >= 0 ? '+' : '−'}${
+        Math.abs(pct).toFixed(1)}%)` : ''}</span></div>
+  </div>`;
+}
+
+function tooltipProv(prov, d, dB) {
   const total = d.total || 0;
+  const cmp = comparando() ? bloqueComparacion(total, dB) : '';
   // El maximo por producto escala las barras; con total 0 no hay nada que desglosar.
   const max = Math.max(...PRODUCTOS.map(p => d[p] || 0));
   if (total <= 0 || max <= 0) {
     return `<div class="tip-title">${prov}</div>
-            <div class="tip-empty">Sin volumen para estos filtros</div>`;
+            <div class="tip-empty">Sin volumen para estos filtros</div>${cmp}`;
   }
   const filas = PRODUCTOS.map(p => {
     const v = d[p] || 0;
@@ -443,6 +629,7 @@ function tooltipProv(prov, d) {
           <div class="tip-total">Total ${formatNum(total)} m³</div>
           ${marca}
           ${filas}
+          ${cmp}
           <div class="tip-hint">Clic para fijar el detalle</div>`;
 }
 
@@ -464,6 +651,27 @@ function showProv(name, d) {
     `).join('')}
   `;
 }
+
+function alternarComparacion(mostrar) {
+  const panel = document.getElementById('sidebarB');
+  const btn = document.getElementById('btnComparar');
+  panel.hidden = !mostrar;
+  btn.classList.toggle('activo', mostrar);
+  btn.textContent = mostrar ? 'Ocultar comparación' : 'Comparar con otra selección';
+  cargarMapa();
+}
+
+document.getElementById('btnComparar').addEventListener('click', () => {
+  alternarComparacion(document.getElementById('sidebarB').hidden);
+});
+document.getElementById('btnCerrarCmp').addEventListener('click', () => alternarComparacion(false));
+
+document.getElementById('chkFiltrarMapaB').addEventListener('change', (ev) => {
+  document.getElementById('cmpNota').textContent = ev.target.checked
+    ? 'El mapa muestra la diferencia B − A: el tamaño es cuánto difieren y el color de qué lado cae.'
+    : 'Los círculos siguen mostrando el panel derecho. Activá la casilla para que el mapa muestre la diferencia B − A.';
+  dibujarMapa();
+});
 
 cargarRutas();
 initFiltros().then(cargarMapa);

@@ -17,3 +17,11 @@ tools/overpass_raw.json
 
 # cache de descarga de limites provinciales (regenerable con tools/fetch_provincias.py)
 tools/overpass_provincias_raw.json
+
+# El entorno portable se desempaqueta en %USERPROFILE%envs\mapa-negocio-planning-runtime,
+# fuera de esta carpeta: son ~60 MB que OneDrive sincronizaria al pedo.
+# Lo que SI va commiteado es vendor/ (el interprete y los .whl, ~18 MB): sin eso
+# el zip no sirve en una PC sin Python ni internet. No agregar vendor/ aca.
+instance/
+*.db.bak
+dist/

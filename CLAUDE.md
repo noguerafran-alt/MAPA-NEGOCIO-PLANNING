@@ -90,9 +90,27 @@ perdió.
 
 ## Correr local
 
-```
-python run_local.py          # http://127.0.0.1:5000
-```
+Doble clic en `iniciar.bat`. No hace falta tener Python instalado ni internet:
+el interprete y los paquetes viajan en `vendor/` y se desempaquetan solos la
+primera vez en `%USERPROFILE%envs\mapa-negocio-planning-runtime`.
 
-Usuario: `flask autorizar-usuario --email a@b.com --nivel 3`. Los niveles son
-acumulativos: 1 mapa y proyecciones, 2 suma admin, 3 suma gestión de usuarios.
+El runtime va **fuera** de la carpeta a proposito: son ~60 MB desempaquetados y
+si la carpeta esta en OneDrive se sincronizarian a la nube. Por la misma razon
+`instance/` (donde SQLite deja `local_dev.db`) esta en el `.gitignore`.
+
+Lo que **si** va commiteado es `vendor/`: sin esos 18 MB el zip no sirve en una
+PC sin Python. Estan marcados `binary` en `.gitattributes` porque un solo byte
+cambiado por `core.autocrlf` deja el zip del interprete ilegible.
+
+En el primer arranque, si no hay ningun usuario, `run_local.py` crea
+`admin@local` / `admin` con nivel 3 y lo avisa en la consola. Es a proposito:
+el paquete se abre con doble clic y si el unico modo de crear el primer usuario
+fuera un comando de Flask, nadie podria entrar. La app escucha solo en
+127.0.0.1. Para mas usuarios esta `crear_usuario.bat`.
+
+Para armar el zip que se le pasa a alguien: `python tools/armar_zip.py`.
+
+**Ojo con `run_local.py`**: el interprete embebido corre en modo aislado y en
+ese modo Python NO agrega la carpeta del script al `sys.path`. Por eso hace un
+`sys.path.insert()` de su propia carpeta; si se saca, `from app import app`
+deja de encontrar nada.

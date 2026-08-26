@@ -258,6 +258,43 @@ explicación.
   dibuja 101 paths en vez de decenas de miles.
 - `dev_seed.db` es una base local de prueba, ignorada por git.
 
+## Paquete portable (para pasarle el zip a alguien)
+
+`python tools/armar_zip.py` genera `dist/MAPA-NEGOCIO-PLANNING.zip`, **18,6 MB**.
+Quien lo recibe descomprime y hace doble clic en `iniciar.bat`: no necesita
+Python, ni VS Code, ni internet.
+
+Sigue el mismo patron que MAPA-NEGOCIO-LOCAL:
+
+- `vendor/python-3.12.10-embed-amd64.zip` — el paquete *embeddable* oficial de
+  python.org, 11 MB. No se instala ni toca el registro: se desempaqueta.
+- `vendor/wheels/` — 26 wheels, 7 MB (cp312/win_amd64). Sin pandas ni numpy,
+  por eso pesa mucho menos que los 83 MB del otro proyecto.
+- `vendor/preparar.py` — reescribe `python312._pth`, extrae el wheel de pip a
+  mano y corre `pip install --no-index`. `--no-index` es la garantia de que no
+  sale a la red: si falta un wheel, falla en vez de bajarlo por atras.
+- `preparar_entorno.bat` / `iniciar.bat` — idempotentes; si el entorno ya esta,
+  arrancan directo.
+
+El runtime se desempaqueta en `%USERPROFILE%envs\mapa-negocio-planning-runtime`,
+**fuera** de la carpeta: son ~60 MB y si la carpeta esta en OneDrive se
+sincronizarian enteros.
+
+**Verificado de punta a punta**: se aparto el runtime, se extrajo el zip en una
+carpeta limpia y se corrio `iniciar.bat`. Desempaqueto el interprete, instalo
+los 24 paquetes offline, chequeo los imports, creo el usuario del primer
+arranque y sirvio todo: `/` 200, `/proyecciones` 200, `/admin` 200, `/modelo`
+200 y el GeoJSON de rutas 200 (599 KB). Login con `admin@local` correcto.
+
+Dos cosas que hay que saber si se toca esto:
+
+- El interprete embebido corre en **modo aislado**, y ahi Python no agrega la
+  carpeta del script al `sys.path`. `run_local.py` hace `sys.path.insert()` de
+  su propia carpeta; sin eso `from app import app` no encuentra nada.
+- Los `.bat` tienen que quedar con **CRLF**. Con LF, `cmd.exe` parte mal las
+  lineas de las etiquetas (`:label`) y falla de formas raras. Esta forzado en
+  `.gitattributes`.
+
 ## Pendiente
 
 - **Normalizar la unidad del MAPE**: `regression_config.mape` guarda una

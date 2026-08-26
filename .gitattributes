@@ -1,0 +1,12 @@
+# vendor/ son blobs de terceros que viajan tal cual: el interprete de python.org
+# y los wheels de PyPI. Marcarlos binary es lo que impide que core.autocrlf los
+# toque (un solo byte cambiado y el zip no abre) y que git intente diffearlos.
+vendor/*.zip          binary linguist-vendored
+vendor/wheels/*.whl   binary linguist-vendored
+
+# Los .bat tienen que quedar con CRLF si o si: con LF, cmd.exe parte mal las
+# lineas de las etiquetas (:label) y el script falla de formas raras.
+*.bat                 text eol=crlf
+
+# El GeoJSON viene generado, no se diffea a mano.
+static/*.geojson      -diff linguist-vendored

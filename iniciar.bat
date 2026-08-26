@@ -2,59 +2,37 @@
 title Mapa Gasoil ^& Naftas
 cd /d "%~dp0"
 
-if not exist "venv\Scripts\activate.bat" (
-    echo Primera vez en esta PC: preparando el entorno, un momento...
-    where python >nul 2>nul
-    if errorlevel 1 (
-        echo.
-        echo No se encontro Python instalado.
-        echo Instala desde https://www.python.org/downloads/
-        echo ^(version 3.11 o 3.12, tildando "Add python.exe to PATH"^) y volve a intentar.
-        echo.
-        pause
-        exit /b 1
-    )
-    python -m venv venv
-    if errorlevel 1 (
-        echo No se pudo crear el entorno virtual. Revisa el mensaje de arriba.
-        pause
-        exit /b 1
-    )
-    call venv\Scripts\activate.bat
-    echo Instalando componentes necesarios...
-    pip install -r requirements.txt
-    if errorlevel 1 (
-        echo Fallo la instalacion de dependencias. Revisa el mensaje de arriba.
-        pause
-        exit /b 1
-    )
-    echo.
-    echo Listo, entorno preparado.
-    echo.
-) else (
-    call venv\Scripts\activate.bat
-)
+REM ===========================================================================
+REM  Un click y anda. No hace falta Python instalado, ni VS Code, ni internet:
+REM  el interprete y los componentes vienen adentro de vendor\.
+REM  preparar_entorno.bat los desempaqueta la primera vez y despues no hace nada.
+REM ===========================================================================
 
-REM Si no hay usuarios, avisar que hay que crear el primero
-if not exist "local_dev.db" (
-    echo.
-    echo ============================================================
-    echo  PRIMERA VEZ: necesitas crear un usuario admin.
-    echo  En otra ventana de comandos, desde esta carpeta, corre:
-    echo.
-    echo    crear_usuario.bat
-    echo.
-    echo  O manualmente:
-    echo    venv\Scripts\activate
-    echo    flask --app app autorizar-usuario --email vos@empresa.com --nombre "Tu Nombre" --nivel 3
-    echo ============================================================
-    echo.
-)
+set "RUNTIME=%USERPROFILE%\venvs\mapa-negocio-planning-runtime"
+set "PY=%RUNTIME%\python.exe"
 
+if not exist "%PY%" goto :preparar
+REM Entorno ya armado: no perdemos segundos revalidando en cada arranque.
+goto :arrancar
+
+:preparar
+call "%~dp0preparar_entorno.bat"
+if errorlevel 1 exit /b 1
+if not exist "%PY%" exit /b 1
+
+:arrancar
+REM El navegador se abre 3 segundos despues, ya con el server escuchando.
 start "" cmd /c "timeout /t 3 >nul && start http://127.0.0.1:5000"
 
-python run_local.py
+"%PY%" run_local.py
 
+REM Salida limpia: la ventana se cierra sola. Si murio por un error, se queda
+REM abierta para poder leerlo.
+if errorlevel 1 goto :murio
+exit /b 0
+
+:murio
 echo.
-echo La app se detuvo. Si no era intencional, revisa el mensaje de arriba.
+echo La app se detuvo por un error. Revisa el mensaje de arriba.
 pause
+exit /b 1
